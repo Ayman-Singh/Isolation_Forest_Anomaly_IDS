@@ -1,0 +1,5 @@
+UGR-16_dataset/**
+UGR16_preprocessed/**
+models/**
+**/__pycache__/**
+**/.vscode/**

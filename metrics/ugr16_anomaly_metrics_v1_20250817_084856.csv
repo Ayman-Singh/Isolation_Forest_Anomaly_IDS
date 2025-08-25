@@ -1,0 +1,2 @@
+accuracy,precision,recall,f1_score,false_positive_rate,true_positive_rate,normal_anomalies,attacks_detected,total_normal,total_attacks,variant,timestamp,pseudo_normal_used
+0.9544907407407407,0.2588141025641026,0.2368035190615836,0.24732006125574274,0.022110144373267044,0.2368035190615836,925,323,41836,1364,v1,20250817_084856,False
