@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Compact UGR'16 preprocessing - production-ready, <250 lines, full functionality.
-Handles compressed files, streaming, memory-safe, resume capability.
+Ultra-fast UGR'16 preprocessing - optimized for speed with vectorized operations.
 """
 import argparse, json, os, gc, gzip, bz2, lzma
 from datetime import datetime
@@ -35,91 +34,137 @@ def read_head(path, n=64*1024):
     try: return opener(path, "rb").read(n).decode("utf-8", errors="ignore")
     except: return ""
 
-def parse_flags(s):
+def parse_flags_fast(s):
+    """Ultra-fast TCP flags parsing with vectorized operations"""
     out = pd.DataFrame(0, index=s.index, columns=["tcp_fin","tcp_syn","tcp_rst","tcp_psh","tcp_ack","tcp_urg","tcp_ece","tcp_cwr"], dtype=np.int8)
     if s.isna().all(): return out
+    
+    # Try numeric first (faster)
     num = pd.to_numeric(s, errors="coerce")
     if num.notna().mean() >= 0.9:  # numeric flags
         v = num.fillna(0).astype(int)
-        for i, col in enumerate(out.columns): out[col] = ((v & (1<<i)) > 0).astype(np.int8)
-    else:  # string flags
-        s_clean = s.fillna("").astype(str).str.replace("[^A-Za-z]","",regex=True).str.upper()
-        # Correct TCP flag letter mapping: F=FIN, S=SYN, R=RST, P=PSH, A=ACK, U=URG, E=ECE, C=CWR
-        flag_letters = ["F", "S", "R", "P", "A", "U", "E", "C"]
-        for col, letter in zip(out.columns, flag_letters): 
-            out[col] = s_clean.str.contains(letter, na=False).astype(np.int8)
+        for i, col in enumerate(out.columns): 
+            out[col] = ((v & (1<<i)) > 0).astype(np.int8)
+        return out
+    
+    # Optimized string processing - vectorized operations
+    s_str = s.fillna("").astype(str)
+    # Direct character checks instead of regex (much faster)
+    out["tcp_fin"] = s_str.str.contains('F', case=False, na=False).astype(np.int8)
+    out["tcp_syn"] = s_str.str.contains('S', case=False, na=False).astype(np.int8)  
+    out["tcp_rst"] = s_str.str.contains('R', case=False, na=False).astype(np.int8)
+    out["tcp_psh"] = s_str.str.contains('P', case=False, na=False).astype(np.int8)
+    out["tcp_ack"] = s_str.str.contains('A', case=False, na=False).astype(np.int8)
+    out["tcp_urg"] = s_str.str.contains('U', case=False, na=False).astype(np.int8)
+    out["tcp_ece"] = s_str.str.contains('E', case=False, na=False).astype(np.int8)
+    out["tcp_cwr"] = s_str.str.contains('C', case=False, na=False).astype(np.int8)
     return out
 
-def parse_proto(s):
+def parse_proto_fast(s):
+    """Ultra-fast protocol parsing"""
     out = pd.DataFrame(0, index=s.index, columns=["pr_tcp","pr_udp","pr_icmp","pr_other"], dtype=np.int8)
-    if s.dtype == object:
-        s_up = s.fillna("").astype(str).str.upper()
-        out["pr_tcp"] = s_up.str.contains("TCP", na=False).astype(np.int8)
-        out["pr_udp"] = s_up.str.contains("UDP", na=False).astype(np.int8)
-        out["pr_icmp"] = s_up.str.contains("ICMP", na=False).astype(np.int8)
-    else:
+    
+    # Try numeric first (fastest)
+    if s.dtype != object:
         v = safe_int(s)
-        out["pr_tcp"] = (v == 6).astype(np.int8); out["pr_udp"] = (v == 17).astype(np.int8); out["pr_icmp"] = (v == 1).astype(np.int8)
+        out["pr_tcp"] = (v == 6).astype(np.int8)
+        out["pr_udp"] = (v == 17).astype(np.int8) 
+        out["pr_icmp"] = (v == 1).astype(np.int8)
+    else:
+        # Optimized string matching
+        s_str = s.fillna("").astype(str).str.upper()
+        out["pr_tcp"] = s_str.str.contains("TCP", na=False).astype(np.int8)
+        out["pr_udp"] = s_str.str.contains("UDP", na=False).astype(np.int8)
+        out["pr_icmp"] = s_str.str.contains("ICMP", na=False).astype(np.int8)
+    
     out["pr_other"] = (~out[["pr_tcp","pr_udp","pr_icmp"]].any(axis=1)).astype(np.int8)
     return out
 
-def port_features(s, prefix):
+def port_features_fast(s, prefix):
+    """Optimized port feature extraction"""
     v = safe_int(s).clip(0, 65535)
-    return pd.DataFrame({f"{prefix}_port": v, f"{prefix}_port_low": (v < 1024).astype(np.int8), f"{prefix}_port_mid": ((v >= 1024) & (v <= 49151)).astype(np.int8), f"{prefix}_port_high": (v > 49151).astype(np.int8)}, index=s.index)
+    # Vectorized comparisons
+    low_mask = v < 1024
+    mid_mask = (v >= 1024) & (v <= 49151)
+    high_mask = v > 49151
+    
+    return pd.DataFrame({
+        f"{prefix}_port": v,
+        f"{prefix}_port_low": low_mask.astype(np.int8),
+        f"{prefix}_port_mid": mid_mask.astype(np.int8),
+        f"{prefix}_port_high": high_mask.astype(np.int8)
+    }, index=s.index)
 
-def downcast_numeric(df: pd.DataFrame) -> pd.DataFrame:
-    """Reduce memory: float64->float32, int64->smaller ints where possible."""
-    float_cols = df.select_dtypes(include=["float64"]).columns
-    if len(float_cols):
-        df[float_cols] = df[float_cols].astype(np.float32)
-    int_cols = df.select_dtypes(include=["int64"]).columns
-    for c in int_cols:
-        df[c] = pd.to_numeric(df[c], downcast="integer")
-    return df
-
-def derive_features(df, mapping):
+def derive_features_fast(df, mapping):
+    """Ultra-fast feature derivation with optimized operations"""
+    # Base features - vectorized
     dur = safe_float(df[mapping["duration"]]) if mapping["duration"] else pd.Series(0.0, index=df.index)
     pkt = safe_float(df[mapping["packets"]]) if mapping["packets"] else pd.Series(0.0, index=df.index)
     byt = safe_float(df[mapping["bytes"]]) if mapping["bytes"] else pd.Series(0.0, index=df.index)
     
-    out = pd.DataFrame({"duration": dur.clip(0), "packets": pkt.clip(0), "bytes": byt.clip(0)}, index=df.index)
-    out["bytes_per_packet"] = byt / pkt.where(pkt > 0, 1e-9)
-    out["packets_per_sec"] = pkt / dur.where(dur > 0, 1e-6)
-    out["bytes_per_sec"] = byt / dur.where(dur > 0, 1e-6)
+    # Create base DataFrame
+    out = pd.DataFrame({
+        "duration": dur.clip(0),
+        "packets": pkt.clip(0), 
+        "bytes": byt.clip(0)
+    }, index=df.index)
     
-    # Add protocol, flags, ports
-    out = pd.concat([out, parse_proto(df[mapping["protocol"]]) if mapping["protocol"] else pd.DataFrame({"pr_tcp":0,"pr_udp":0,"pr_icmp":0,"pr_other":1}, index=df.index)], axis=1)
-    out = pd.concat([out, parse_flags(df[mapping["flags"]]) if mapping["flags"] else pd.DataFrame({k:0 for k in ["tcp_fin","tcp_syn","tcp_rst","tcp_psh","tcp_ack","tcp_urg","tcp_ece","tcp_cwr"]}, index=df.index)], axis=1)
+    # Vectorized ratio calculations with safe division
+    pkt_safe = pkt.where(pkt > 0, 1e-9)
+    dur_safe = dur.where(dur > 0, 1e-6)
     
+    out["bytes_per_packet"] = byt / pkt_safe
+    out["packets_per_sec"] = pkt / dur_safe  
+    out["bytes_per_sec"] = byt / dur_safe
+    
+    # Protocol features
+    if mapping["protocol"]:
+        proto_df = parse_proto_fast(df[mapping["protocol"]])
+    else:
+        proto_df = pd.DataFrame({"pr_tcp":0,"pr_udp":0,"pr_icmp":0,"pr_other":1}, index=df.index)
+    out = pd.concat([out, proto_df], axis=1)
+    
+    # TCP flags 
+    if mapping["flags"]:
+        flags_df = parse_flags_fast(df[mapping["flags"]])
+    else:
+        flags_df = pd.DataFrame({k:0 for k in ["tcp_fin","tcp_syn","tcp_rst","tcp_psh","tcp_ack","tcp_urg","tcp_ece","tcp_cwr"]}, index=df.index)
+    out = pd.concat([out, flags_df], axis=1)
+    
+    # Port features
     for key, prefix in [("src_port", "src"), ("dst_port", "dst")]:
-        out = pd.concat([out, port_features(df[mapping[key]], prefix) if mapping[key] else pd.DataFrame({f"{prefix}_port":0,f"{prefix}_port_low":0,f"{prefix}_port_mid":0,f"{prefix}_port_high":0}, index=df.index)], axis=1)
+        if mapping[key]:
+            port_df = port_features_fast(df[mapping[key]], prefix)
+        else:
+            port_df = pd.DataFrame({f"{prefix}_port":0,f"{prefix}_port_low":0,f"{prefix}_port_mid":0,f"{prefix}_port_high":0}, index=df.index)
+        out = pd.concat([out, port_df], axis=1)
     
+    # Simple numeric features
     out["tos"] = safe_int(df[mapping["tos"]]).clip(0) if mapping["tos"] else 0
     out["fwd"] = safe_int(df[mapping["fwd"]]).clip(0) if mapping["fwd"] else 0
     
-    # Log features
-    for col in ["bytes", "packets", "bytes_per_packet", "packets_per_sec", "bytes_per_sec"]:
-        out[f"log1p_{col}"] = np.log1p(out[col])
+    # Vectorized log features - use numpy for speed
+    log_cols = ["bytes", "packets", "bytes_per_packet", "packets_per_sec", "bytes_per_sec"]
+    for col in log_cols:
+        out[f"log1p_{col}"] = np.log1p(out[col].values)
     
-    # Time features (fast-path parse with known format, fallback if needed)
+    # Optimized time features
     if mapping["timestamp"]:
-        ts = None
-        col = df[mapping["timestamp"]]
-        try:
-            # Most UGR'16 rows are like 'YYYY-MM-DD HH:MM:SS'
-            ts = pd.to_datetime(col, format="%Y-%m-%d %H:%M:%S", errors="coerce")
-            # If too many NA (e.g., differing format), fallback to generic parser
-            if ts.isna().mean() > 0.2:
-                ts = pd.to_datetime(col, errors="coerce")
-        except Exception:
-            ts = pd.to_datetime(col, errors="coerce")
+        ts = pd.to_datetime(df[mapping["timestamp"]], format="%Y-%m-%d %H:%M:%S", errors="coerce")
+        if ts.isna().mean() > 0.2:
+            ts = pd.to_datetime(df[mapping["timestamp"]], errors="coerce")
+        
         if not ts.isna().all():
-            h, d = ts.dt.hour.fillna(0), ts.dt.dayofweek.fillna(0)
-            out["hour_sin"], out["hour_cos"] = np.sin(2*np.pi*h/24), np.cos(2*np.pi*h/24)
-            out["dow_sin"], out["dow_cos"] = np.sin(2*np.pi*d/7), np.cos(2*np.pi*d/7)
+            h, d = ts.dt.hour.fillna(0).values, ts.dt.dayofweek.fillna(0).values
+            # Vectorized trigonometric operations
+            out["hour_sin"] = np.sin(2*np.pi*h/24)
+            out["hour_cos"] = np.cos(2*np.pi*h/24) 
+            out["dow_sin"] = np.sin(2*np.pi*d/7)
+            out["dow_cos"] = np.cos(2*np.pi*d/7)
         else:
             out["hour_sin"] = out["hour_cos"] = out["dow_sin"] = out["dow_cos"] = 0.0
-    else: out["hour_sin"] = out["hour_cos"] = out["dow_sin"] = out["dow_cos"] = 0.0
+    else:
+        out["hour_sin"] = out["hour_cos"] = out["dow_sin"] = out["dow_cos"] = 0.0
     
     return out
 
@@ -133,11 +178,18 @@ def detect_label(df, mapping):
     if attack_cols: return (df[attack_cols].apply(pd.to_numeric, errors="coerce").fillna(0).sum(axis=1) > 0).astype(np.int8)
     return pd.Series(0, index=df.index, dtype=np.int8)
 
-def open_reader(path, chunksize, force_sep):
+def open_reader_fast(path, chunksize, force_sep):
+    """Optimized CSV reader with better engine selection"""
     sample = read_head(path)
     sep = force_sep or detect_sep(sample)
-    try: probe = pd.read_csv(path, nrows=5, sep=sep, compression="infer", on_bad_lines="skip", engine="python" if sep=="|" else "c")
-    except Exception as e: raise ValueError(f"Cannot read {path}: {e}")
+    
+    # Use faster C engine when possible
+    engine = "c" if sep in [",", "\t"] else "python"
+    
+    try: 
+        probe = pd.read_csv(path, nrows=5, sep=sep, compression="infer", on_bad_lines="skip", engine=engine)
+    except Exception as e: 
+        raise ValueError(f"Cannot read {path}: {e}")
     
     # Check if headerless (UGR16 common case)
     cols_lower = [str(c).lower() for c in probe.columns]
@@ -146,20 +198,34 @@ def open_reader(path, chunksize, force_sep):
     if not has_header:
         n = len(probe.columns)
         names = ["timestamp","duration","src_ip","dst_ip","src_port","dst_port","protocol","flags","fwd_status","tos","packets","bytes","label"][:n] if n >= 12 else ["timestamp","duration","src_ip","dst_ip","src_port","dst_port","protocol","flags","fwd_status","tos","packets","bytes"][:n]
-        return pd.read_csv(path, chunksize=chunksize, sep=sep, compression="infer", on_bad_lines="skip", engine="python" if sep=="|" else "c", header=None, names=names), sep
-    return pd.read_csv(path, chunksize=chunksize, sep=sep, compression="infer", on_bad_lines="skip", engine="python" if sep=="|" else "c"), sep
+        return pd.read_csv(path, chunksize=chunksize, sep=sep, compression="infer", on_bad_lines="skip", engine=engine, header=None, names=names, dtype=str), sep
+    return pd.read_csv(path, chunksize=chunksize, sep=sep, compression="infer", on_bad_lines="skip", engine=engine, dtype=str), sep
+
+def downcast_numeric_fast(df: pd.DataFrame) -> pd.DataFrame:
+    """Optimized memory reduction"""
+    # Vectorized downcasting
+    float_cols = df.select_dtypes(include=["float64"]).columns
+    if len(float_cols):
+        df[float_cols] = df[float_cols].astype(np.float32)
+    
+    int_cols = df.select_dtypes(include=["int64"]).columns
+    for c in int_cols:
+        df[c] = pd.to_numeric(df[c], downcast="integer")
+    return df
 
 def write_data(df, path, fmt, part_idx):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    if fmt == "csv": df.to_csv(path, index=False, header=not os.path.exists(path), mode="a")
+    if fmt == "csv": 
+        df.to_csv(path, index=False, header=not os.path.exists(path), mode="a")
     else:
         part_dir = path.replace(".parquet", "_parts")
         os.makedirs(part_dir, exist_ok=True)
         try: 
             if not PARQUET_OK: raise ImportError()
-            # Use zstd for good speed/ratio
-            df.to_parquet(f"{part_dir}/part-{part_idx:06d}.parquet", index=False, compression="zstd")
-        except: df.to_csv(path.replace(".parquet", ".csv"), index=False, header=not os.path.exists(path.replace(".parquet", ".csv")), mode="a")
+            # Use faster compression
+            df.to_parquet(f"{part_dir}/part-{part_idx:06d}.parquet", index=False, compression="snappy")  # snappy is faster than zstd
+        except: 
+            df.to_csv(path.replace(".parquet", ".csv"), index=False, header=not os.path.exists(path.replace(".parquet", ".csv")), mode="a")
 
 def _next_parquet_part_idx(path):
     """Return next part index for a parquet dataset path (resume-safe)."""
@@ -206,17 +272,18 @@ def expand_files(paths):
     return sorted(files) or (_ for _ in ()).throw(FileNotFoundError("No files found"))
 
 def main():
-    p = argparse.ArgumentParser(description="Compact UGR'16 preprocessor")
+    p = argparse.ArgumentParser(description="Ultra-fast UGR'16 preprocessor")
     p.add_argument("--input", nargs="+", required=True, help="Input files/dirs")
     p.add_argument("--output-dir", required=True, help="Output directory")
-    p.add_argument("--chunksize", type=int, default=250000)
+    p.add_argument("--chunksize", type=int, default=1000000)  # Larger default for speed
     p.add_argument("--format", choices=["csv","parquet"], default="csv")
     p.add_argument("--max-rows", type=int, help="Row limit for testing")
     p.add_argument("--force-sep", choices=[",",";","\t","|"])
     p.add_argument("--resume", action="store_true")
     p.add_argument("--overwrite", action="store_true")
     args = p.parse_args()
-    # Anomaly detection: always train only on normal traffic with temporal split
+    
+    # Always train only on normal traffic with temporal split
     normal_only_train = True
     
     if args.format == "parquet" and not PARQUET_OK: print("Warning: pyarrow missing, falling back to CSV")
@@ -247,50 +314,72 @@ def main():
     if args.format == "parquet":
         part_idx = max(_next_parquet_part_idx(train_path), _next_parquet_part_idx(test_path))
 
-    def handle_files(file_list, out_path, write_all):
+    def handle_files_fast(file_list, out_path, write_all):
         nonlocal features, total_rows, train_rows, test_rows, part_idx
         if not file_list: return
         print(("Processing training data (March-June)..." if not write_all else "Processing testing data (July-August)..."))
+        
         for fpath in file_list:
             if args.resume and fpath in checkpoint: continue
             try:
-                reader, _ = open_reader(fpath, args.chunksize, args.force_sep)
+                reader, _ = open_reader_fast(fpath, args.chunksize, args.force_sep)
             except Exception as e:
                 print(f"Skip {fpath}: {e}"); continue
+                
             for chunk_idx, chunk in enumerate(reader, 1):
                 try:
+                    # Fast column mapping
                     mapping = {k: find_col(chunk.columns, v) for k, v in COLS.items()}
-                    derived = derive_features(chunk, mapping)
+                    
+                    # Fast feature derivation
+                    derived = derive_features_fast(chunk, mapping)
                     derived["label"] = detect_label(chunk, mapping)
+                    
+                    # Fast cleanup
                     num_cols = derived.select_dtypes(include=[np.number]).columns
                     derived = derived.dropna(subset=num_cols, how="all")
                     derived[num_cols] = derived[num_cols].fillna(0)
+                    
+                    # Feature consistency
                     if features is None:
                         features = [c for c in derived.columns if c != "label"]
                         json.dump(features, open(os.path.join(args.output_dir, "features.json"), "w"), indent=2)
+                    
                     for f in features + ["label"]:
                         if f not in derived.columns: derived[f] = 0
                     derived = derived[features + ["label"]]
+                    
+                    # Filter and optimize
                     df = derived if write_all else derived[derived["label"] == 0]
                     if len(df):
-                        df = downcast_numeric(df)
+                        df = downcast_numeric_fast(df)
                         write_data(df, out_path, args.format, part_idx)
                         if write_all: test_rows += len(df)
                         else: train_rows += len(df)
                         part_idx += 1
+                    
                     total_rows += len(derived)
+                    
+                    # Aggressive memory cleanup
                     del chunk, derived
                     if 'df' in locals() and df is not None: del df
                     gc.collect()
-                    if chunk_idx % 20 == 0: print(f"{os.path.basename(fpath)}: {chunk_idx} chunks, {total_rows} rows")
+                    
+                    # Progress reporting
+                    if chunk_idx % 10 == 0:  # More frequent progress updates
+                        print(f"{os.path.basename(fpath)}: {chunk_idx} chunks, {total_rows} rows processed")
+                    
                     if args.max_rows and total_rows >= args.max_rows: break
                 except Exception as e:
                     print(f"Error chunk {chunk_idx}: {e}"); continue
-            checkpoint[fpath] = datetime.now().isoformat(); save_checkpoint(args.output_dir, checkpoint)
+            
+            checkpoint[fpath] = datetime.now().isoformat()
+            save_checkpoint(args.output_dir, checkpoint)
             if args.max_rows and total_rows >= args.max_rows: break
 
-    handle_files(train_files, train_path, write_all=False)
-    handle_files(test_files, test_path, write_all=True)
+    # Process files
+    handle_files_fast(train_files, train_path, write_all=False)
+    handle_files_fast(test_files, test_path, write_all=True)
     
     if not features: raise RuntimeError("No data processed")
     
@@ -304,7 +393,7 @@ def main():
         "total_rows": total_rows, 
         "train_rows": train_rows, 
         "test_rows": test_rows, 
-        "features": features,  # CRITICAL: store actual feature names for model training
+        "features": features,
         "num_features": len(features),
         "dataset": "UGR16",
         "format": args.format,

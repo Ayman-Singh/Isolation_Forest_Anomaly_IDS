@@ -1,97 +1,27 @@
-2025-08-17 08:48:29,925 - INFO - Starting UGR16 anomaly detection training pipeline
-2025-08-17 08:48:29,925 - INFO - Loading UGR16 dataset variant: v1
-2025-08-17 08:48:30,507 - INFO - Loaded UGR16 v1:
-2025-08-17 08:48:30,507 - INFO -  X_train: (134262, 134)
-2025-08-17 08:48:30,507 - INFO -  Y_train: (134262, 8)
-2025-08-17 08:48:30,507 - INFO -  X_test: (43200, 134)
-2025-08-17 08:48:30,507 - INFO -  Y_test: (43200, 8)
-2025-08-17 08:48:30,507 - INFO - Preprocessing UGR16 data (core attack labels define anomalies)
-2025-08-17 08:48:30,518 - INFO - Training data - Normal: 134262, Attacks: 0
-2025-08-17 08:48:30,519 - INFO - Test data - Normal: 41836, Attacks: 1364
-2025-08-17 08:48:30,699 - INFO - Preprocessed data shapes (true normal definition):
-2025-08-17 08:48:30,699 - INFO -  Train normal: (134262, 134)
-2025-08-17 08:48:30,699 - INFO -  Train attack: (0, 134)
-2025-08-17 08:48:30,699 - INFO -  Test normal: (41836, 134)
-2025-08-17 08:48:30,699 - INFO -  Test attack: (1364, 134)
-2025-08-17 08:48:30,699 - INFO - Training anomaly detector on normal data only
-2025-08-17 08:48:30,699 - INFO - Training Isolation Forest with 60 trees
-2025-08-17 08:48:30,699 - INFO - Training on 134262 normal samples only
-2025-08-17 08:48:30,701 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,704 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,707 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,711 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,714 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,717 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,720 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,724 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,727 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,730 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,733 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,736 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,738 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,740 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,742 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,744 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,747 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,749 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,751 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,753 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,755 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,757 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,760 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,762 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,763 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,766 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,768 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,770 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,773 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,775 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,777 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,779 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,782 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,784 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,786 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,788 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,790 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,792 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,795 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,797 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,799 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,801 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,804 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,806 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,808 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,811 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,813 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,815 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,818 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,819 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,822 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,824 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,826 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,829 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,831 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,833 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,835 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,837 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,839 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,842 - INFO - Training isolation tree with 256 samples
-2025-08-17 08:48:30,843 - INFO - Anomaly detector trained in 0.14 seconds
-2025-08-17 08:48:50,470 - INFO - Static anomaly threshold (quantile 0.95): 0.4468
-2025-08-17 08:48:50,470 - INFO - Initial dynamic threshold targeting FPR 5.00%: 0.4397
-2025-08-17 08:48:56,643 - INFO - Anomaly Detection Performance (score >= threshold considered anomaly):
-2025-08-17 08:48:56,644 - INFO -  Accuracy: 0.9545
-2025-08-17 08:48:56,644 - INFO -  Precision: 0.2588
-2025-08-17 08:48:56,644 - INFO -  Recall: 0.2368
-2025-08-17 08:48:56,644 - INFO -  F1 Score: 0.2473
-2025-08-17 08:48:56,644 - INFO -  False Positive Rate: 0.0221
-2025-08-17 08:48:56,644 - INFO -  True Positive Rate: 0.2368
-2025-08-17 08:48:56,644 - INFO -  Normal flagged: 925/41836 (2.21%) Threshold: 0.4397
-2025-08-17 08:48:56,644 - INFO -  Attacks detected: 323/1364 (23.68%)
-2025-08-17 08:48:56,645 - INFO - Metrics saved: metrics/ugr16_anomaly_metrics_v1_20250817_084856.csv; history updated: metrics/ugr16_anomaly_metrics_history.csv
-2025-08-17 08:48:56,730 - INFO - Model saved: models/ugr16_anomaly_detector_v1.joblib
-2025-08-17 08:48:56,731 - INFO - UGR16 v1 anomaly detection completed successfully
-2025-08-21 08:15:48,003 - INFO - Training Isolation Forest with 10 trees
-2025-08-21 08:15:48,004 - INFO - Training on 100 normal samples only
-2025-08-21 08:15:48,004 - INFO - Using adaptive max_samples: 50
-2025-08-21 08:15:48,041 - INFO - Normalization factor: 6.9781
+2025-09-01 04:19:01,791 - INFO - Skipping preprocessing as requested (--skip-preprocess).
+2025-09-01 04:19:01,792 - INFO - Loading training data: UGR16_preprocessed/production_train/train.csv with 22 features (float32)
+2025-09-01 05:11:52,725 - INFO - Skipping preprocessing as requested (--skip-preprocess).
+2025-09-01 05:11:52,726 - INFO - Streaming training from UGR16_preprocessed/production_train/train.csv: target_rows=2000000, chunksize=100000
+2025-09-01 05:11:55,416 - INFO - Streamed rows: 2000000
+2025-09-01 05:11:55,420 - INFO - Loaded train.csv: rows=2000000, cols=23, approx_mem=0.18 GB
+2025-09-01 05:11:55,452 - INFO - Training matrix ready: shape=(2000000, 22), dtype=float32
+2025-09-01 05:11:55,452 - INFO - Training Isolation Forest: 150 estimators, contamination=auto
+2025-09-01 05:13:11,171 - INFO - Training complete
+2025-09-01 05:13:26,239 - INFO - Model saved: models/ugr16_isolation_forest_anomaly_detector_v3_20250901_051151.joblib
+nohup: ignoring input
+2025-09-01 05:15:23,353 - INFO - Skipping preprocessing as requested (--skip-preprocess).
+2025-09-01 05:15:23,353 - INFO - Loading training data: UGR16_preprocessed/production_train/train.csv with 22 features (float32)
+2025-09-01 06:17:33,419 - INFO - Skipping preprocessing as requested (--skip-preprocess).
+2025-09-01 06:17:33,421 - INFO - Loading training data: UGR16_preprocessed/production_train/train.csv with 22 features (float32)
+2025-09-05 04:44:50,224 - INFO - Skipping preprocessing as requested (--skip-preprocess).
+2025-09-05 04:44:50,224 - INFO - Streaming training from UGR16_preprocessed/production_train/train.csv: target_rows=10000000, chunksize=100000
+2025-09-05 04:45:03,243 - INFO - Streamed rows: 10000000
+2025-09-05 04:45:03,247 - INFO - Loaded train.csv: rows=10000000, cols=23, approx_mem=0.89 GB
+2025-09-05 04:45:03,401 - INFO - Training matrix ready: shape=(10000000, 22), dtype=float32
+2025-09-05 04:45:03,401 - INFO - Training Isolation Forest: 150 estimators, contamination=auto
+2025-09-05 04:45:11,926 - INFO - Training complete
+2025-09-05 04:45:12,025 - INFO - Model saved: models/ugr16_isolation_forest_anomaly_detector_v3_20250905_044449.joblib
+python3: can't open file '/home/hp/anomaly_ids/model_script.py': [Errno 2] No such file or directory
+python3: can't open file '/home/hp/anomaly_ids/model_script.py': [Errno 2] No such file or directory
+python3: can't open file '/home/hp/anomaly_ids/model_script.py': [Errno 2] No such file or directory
+python3: can't open file '/home/hp/anomaly_ids/model_script.py': [Errno 2] No such file or directory

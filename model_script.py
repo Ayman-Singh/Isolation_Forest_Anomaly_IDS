@@ -4,854 +4,518 @@ from datetime import datetime
 import gc
 import os
 import logging
-from typing import Optional, Tuple, List, Dict, Any
+import joblib
+import json
+from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import RobustScaler
+from sklearn.metrics import (
+    precision_recall_fscore_support,
+    roc_auc_score,
+    average_precision_score,
+    confusion_matrix,
+)
+from typing import Optional, Tuple
 import warnings
-import argparse
-from collections import deque
 
 warnings.filterwarnings('ignore')
 
-"""Anomaly detection on UGR16 with an Isolation Forest implementation."""
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler('anomaly_detection.log'),
-        logging.StreamHandler(),
-    ],
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+COLS = {
+    "timestamp": ["ts","stime","start_time","date first seen","time","start","timestamp"],
+    "duration": ["td","dur","duration"], 
+    "src_ip": ["sa","src","srcaddr","srcip","source_ip","src_ip"],
+    "dst_ip": ["da","dst","dstaddr","dstip","destination_ip","dst_ip"], 
+    "src_port": ["sp","sport","srcport","spt","src_port"],
+    "dst_port": ["dp","dport","dstport","dpt","dst_port"], 
+    "protocol": ["pr","proto","protocol"],
+    "flags": ["flg","flags","tcp_flags"], 
+    "packets": ["pkt","pkts","packets","ipkt","tot_pkts"],
+    "bytes": ["byt","bytes","ibyt","tot_bytes"], 
+    "tos": ["stos","tos","type_of_service"],
+    "fwd": ["fwd","forwarding status","forward_status","fwd_status"], 
+    "label": ["label","attack","is_attack","y"],
+}
 
-class RobustScaler:
-    """Robust + MinMax scaler with feature selection baked in.
+def find_col(df_cols, candidates): 
+    return next((c for c in df_cols if str(c).lower() in [x.lower() for x in candidates]), None)
 
-    - Fits on normal-only data.
-    - Drops near-constant features and remembers a mask.
-    - Uses IQR-based scaling when possible, else MinMax.
-    - Ensures consistent transform at train/test/inference time.
-    """
+def safe_numeric(s, dtype=np.float32): 
+    return pd.to_numeric(s, errors="coerce").fillna(0).astype(dtype)
 
-    def __init__(self, var_eps: float = 1e-10, iqr_eps: float = 1e-8):
-        self.var_eps = var_eps
-        self.iqr_eps = iqr_eps
-        self.fitted: bool = False
-        self.feature_mask: Optional[np.ndarray] = None
-        self.median_vals: Optional[np.ndarray] = None
-        self.iqr_vals: Optional[np.ndarray] = None
-        self.min_vals: Optional[np.ndarray] = None
-        self.max_vals: Optional[np.ndarray] = None
-        self.use_robust: Optional[np.ndarray] = None
+def detect_sep(sample): 
+    return max([",",";","\t","|"], key=lambda s: sample.count(s))
 
-    def fit(self, X: np.ndarray) -> "RobustScaler":
-        # Remove constant/near-constant features
-        vars_ = np.var(X, axis=0)
-        self.feature_mask = vars_ > self.var_eps
-        Xf = X[:, self.feature_mask] if np.any(self.feature_mask) else X
+def parse_flags(s):
+    out = pd.DataFrame(0, index=s.index, columns=["fin","syn","rst","psh","ack","urg"], dtype=np.int8)
+    if s.isna().all(): return out
+    
+    num = pd.to_numeric(s, errors="coerce")
+    if num.notna().mean() >= 0.8:
+        v = num.fillna(0).astype(int)
+        for i, col in enumerate(out.columns): 
+            out[col] = ((v & (1<<i)) > 0).astype(np.int8)
+    else:
+        s_clean = s.fillna("").astype(str).str.upper()
+        for col, letter in zip(out.columns, ["F","S","R","P","A","U"]): 
+            out[col] = s_clean.str.contains(letter, na=False).astype(np.int8)
+    return out
 
-        # Compute robust stats on filtered features
-        q25 = np.percentile(Xf, 25, axis=0)
-        q75 = np.percentile(Xf, 75, axis=0)
-        iqr = q75 - q25
-        med = np.median(Xf, axis=0)
-        mn = np.min(Xf, axis=0)
-        mx = np.max(Xf, axis=0)
+def parse_proto(s):
+    out = pd.DataFrame(0, index=s.index, columns=["tcp","udp","icmp"], dtype=np.int8)
+    if s.dtype == object:
+        s_up = s.fillna("").astype(str).str.upper()
+        out["tcp"] = s_up.str.contains("TCP", na=False).astype(np.int8)
+        out["udp"] = s_up.str.contains("UDP", na=False).astype(np.int8)
+        out["icmp"] = s_up.str.contains("ICMP", na=False).astype(np.int8)
+    else:
+        v = safe_numeric(s, np.int32)
+        out["tcp"] = (v == 6).astype(np.int8)
+        out["udp"] = (v == 17).astype(np.int8)
+        out["icmp"] = (v == 1).astype(np.int8)
+    return out
 
-        self.median_vals = med
-        self.iqr_vals = iqr
-        self.min_vals = mn
-        self.max_vals = mx
-        self.use_robust = iqr > self.iqr_eps
-        self.fitted = True
-        return self
+def port_features(s, prefix):
+    v = safe_numeric(s, np.int32).clip(0, 65535)
+    return pd.DataFrame({
+        f"{prefix}_port": v, 
+        f"{prefix}_low": (v < 1024).astype(np.int8),
+        f"{prefix}_high": (v > 49151).astype(np.int8)
+    }, index=s.index)
 
-    def transform(self, X: np.ndarray) -> np.ndarray:
-        if not self.fitted:
-            raise ValueError("Scaler not fitted")
+def derive_features(df, mapping):
+    dur = safe_numeric(df[mapping["duration"]]) if mapping["duration"] else pd.Series(0.0, index=df.index)
+    pkt = safe_numeric(df[mapping["packets"]]) if mapping["packets"] else pd.Series(0.0, index=df.index)
+    byt = safe_numeric(df[mapping["bytes"]]) if mapping["bytes"] else pd.Series(0.0, index=df.index)
+    
+    out = pd.DataFrame({
+        "duration": dur.clip(0), 
+        "packets": pkt.clip(0), 
+        "bytes": byt.clip(0),
+        "bps": byt / pkt.where(pkt > 0, 1),
+        "pps": pkt / np.maximum(dur, 1e-3),
+        "log_bytes": np.log1p(byt),
+        "log_packets": np.log1p(pkt)
+    }, index=df.index)
+    
+    out = pd.concat([out, parse_proto(df[mapping["protocol"]]) if mapping["protocol"] else 
+                    pd.DataFrame({"tcp":0,"udp":0,"icmp":0}, index=df.index)], axis=1)
+    out = pd.concat([out, parse_flags(df[mapping["flags"]]) if mapping["flags"] else 
+                    pd.DataFrame({f:0 for f in ["fin","syn","rst","psh","ack","urg"]}, index=df.index)], axis=1)
+    
+    for key, prefix in [("src_port", "src"), ("dst_port", "dst")]:
+        out = pd.concat([out, port_features(df[mapping[key]], prefix) if mapping[key] else 
+                        pd.DataFrame({f"{prefix}_port":0,f"{prefix}_low":0,f"{prefix}_high":0}, index=df.index)], axis=1)
+    
+    return out.astype(np.float32)
 
-        X = np.nan_to_num(X, nan=0.0)
-        X = np.where(np.isfinite(X), X, 0.0)
-        Xf = X[:, self.feature_mask] if np.any(self.feature_mask) else X
+def detect_label(df, mapping):
+    if mapping["label"]:
+        s = df[mapping["label"]]
+        if s.dtype == object: 
+            s_lower = s.astype(str).str.lower()
+            return (~s_lower.isin(["background", "normal", "benign"])).astype(np.int8)
+        return (safe_numeric(s, np.int32) > 0).astype(np.int8)
+    
+    last_col = df.iloc[:, -1] if len(df.columns) > 0 else pd.Series(dtype=object)
+    if last_col.dtype == object:
+        s_lower = last_col.astype(str).str.lower()
+        return (~s_lower.isin(["background", "normal", "benign"])).astype(np.int8)
+    
+    return pd.Series(0, index=df.index, dtype=np.int8)
 
-        out = np.zeros_like(Xf, dtype=float)
+def get_month(path):
+    path_lower = path.lower()
+    if "march" in path_lower: return "march"
+    if "april" in path_lower: return "april" 
+    if "may" in path_lower: return "may"
+    if "june" in path_lower: return "june"
+    if "july" in path_lower: return "july"
+    if "august" in path_lower: return "august"
+    return "unknown"
 
-        # Robust scaling
-        if np.any(self.use_robust):
-            rmask = self.use_robust
-            out[:, rmask] = (Xf[:, rmask] - self.median_vals[rmask]) / (self.iqr_vals[rmask] + 1e-8)
-            out[:, rmask] = np.clip(out[:, rmask], -3.0, 3.0)
-            out[:, rmask] = (out[:, rmask] + 3.0) / 6.0
+def expand_files(paths):
+    files = []
+    for p in paths:
+        if os.path.isdir(p): 
+            files.extend([os.path.join(r,f) for r,_,fs in os.walk(p) for f in fs if os.path.getsize(os.path.join(r,f)) > 0])
+        elif os.path.isfile(p) and os.path.getsize(p) > 0: 
+            files.append(p)
+    return sorted(files)
 
-        # MinMax fallback
-        mmmask = ~self.use_robust
-        if np.any(mmmask):
-            rng = self.max_vals[mmmask] - self.min_vals[mmmask]
-            rng[rng == 0] = 1.0
-            out[:, mmmask] = (Xf[:, mmmask] - self.min_vals[mmmask]) / rng
-            out[:, mmmask] = np.clip(out[:, mmmask], 0.0, 1.0)
-
-        return out
-
-    def get_params(self) -> Dict[str, Any]:
-        return {
-            'feature_mask': self.feature_mask,
-            'median_vals': self.median_vals,
-            'iqr_vals': self.iqr_vals,
-            'min_vals': self.min_vals,
-            'max_vals': self.max_vals,
-            'use_robust': self.use_robust,
-        }
-
-
-class IsolationTree:
-    """Isolation tree used for unsupervised anomaly detection"""
-
-    def __init__(self, max_depth: int = None, random_state: int = 42):
-        # Adaptive depth based on data size: ceil(log2(max_samples)) + 1
-        self.max_depth = max_depth if max_depth is not None else 15  # Increased default
-        self.random_state = random_state
-        self.tree = None
-
-    def _random_split(self, X: np.ndarray) -> Tuple[Optional[int], Optional[float]]:
-        """Generate random split point with improved feature selection"""
-        n_features = X.shape[1]
+def preprocess_data(input_paths, output_dir, chunksize=100000, max_rows=None):
+    logger.info("Starting preprocessing...")
+    
+    files = expand_files(input_paths)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    train_months = ["march"]
+    test_months = ["april", "may", "june", "july", "august"]
+    train_files = [f for f in files if get_month(f) in train_months]
+    # Only include test months if any provided input path mentions them; prevents accidental April processing
+    inputs_lower = " ".join(input_paths).lower() if isinstance(input_paths, list) else str(input_paths).lower()
+    enable_test = any(m in inputs_lower for m in test_months)
+    test_files = [f for f in files if get_month(f) in test_months] if enable_test else []
+    
+    train_path = os.path.join(output_dir, "train.csv")
+    test_path = os.path.join(output_dir, "test.csv")
+    
+    for p in [train_path, test_path]: 
+        if os.path.exists(p): os.remove(p)
+    
+    features, total_rows, train_rows, test_rows = None, 0, 0, 0
+    
+    def process_files(file_list, out_path, keep_attacks):
+        nonlocal features, total_rows, train_rows, test_rows
+        if not file_list: return
         
-        # Enhanced feature selection: prefer features with higher variance
-        if X.shape[0] > 1:
-            feature_vars = np.var(X, axis=0)
-            # Avoid zero variance features
-            valid_features = np.where(feature_vars > 1e-8)[0]
-            if len(valid_features) == 0:
-                return None, None
-            
-            # Weighted selection favoring high-variance features
-            weights = feature_vars[valid_features]
-            weights = weights / np.sum(weights)
-            feature_idx = np.random.choice(valid_features, p=weights)
-        else:
-            feature_idx = np.random.randint(0, n_features)
-        
-        feature_values = X[:, feature_idx]
-        min_val = np.min(feature_values)
-        max_val = np.max(feature_values)
-        
-        if min_val == max_val:
-            return None, None
-        
-        # More robust threshold selection
-        # Use interquartile range to avoid extreme outliers
-        q25, q75 = np.percentile(feature_values, [25, 75])
-        if q75 > q25:
-            threshold = np.random.uniform(q25, q75)
-        else:
-            threshold = np.random.uniform(min_val, max_val)
-            
-        return feature_idx, threshold
-
-    def _build_tree(self, X: np.ndarray, depth: int = 0) -> Dict[str, Any]:
-        """Build isolation tree recursively"""
-        n_samples = X.shape[0]
-
-        # Stopping conditions
-        if depth >= self.max_depth or n_samples <= 1:
-            return {
-                'type': 'leaf',
-                'size': n_samples,
-                'depth': depth,
-            }
-
-        # Generate random split
-        feature, threshold = self._random_split(X)
-        if feature is None:
-            return {
-                'type': 'leaf',
-                'size': n_samples,
-                'depth': depth,
-            }
-
-        # Split data
-        left_mask = X[:, feature] <= threshold
-        right_mask = ~left_mask
-
-        # Create node
-        node = {
-            'type': 'node',
-            'feature': feature,
-            'threshold': threshold,
-            'depth': depth,
-            'left': self._build_tree(X[left_mask], depth + 1),
-            'right': self._build_tree(X[right_mask], depth + 1),
-        }
-        return node
-
-    def fit(self, X: np.ndarray) -> 'IsolationTree':
-        """Train the isolation tree (unsupervised) with enhanced splitting"""
-        np.random.seed(self.random_state)
-        self.tree = self._build_tree(X)
-        return self
-
-    def _path_length(self, x: np.ndarray, node: Dict[str, Any], depth: int = 0) -> float:
-        """Calculate normalized path length (adds expected adjustment for leaf size)"""
-        if node['type'] == 'leaf':
-            size = max(1, node.get('size', 1))
-            if size <= 1:
-                return depth
-            # Expected path length adjustment for leaf samples
-            c = 2 * (np.log(size - 1) + 0.5772156649) - (2 * (size - 1) / size)
-            return depth + c
-
-        if x[node['feature']] <= node['threshold']:
-            return self._path_length(x, node['left'], depth + 1)
-        else:
-            return self._path_length(x, node['right'], depth + 1)
-
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        """Predict anomaly scores (lower = more anomalous)"""
-        if self.tree is None:
-            raise ValueError("Model not trained yet. Call fit() first.")
-
-        path_lengths = []
-        for x in X:
-            path_length = self._path_length(x, self.tree)
-            path_lengths.append(path_length)
-        return np.array(path_lengths)
-
-
-class IsolationForest:
-    """Isolation Forest for unsupervised network traffic anomaly detection
-
-    Enhanced with streaming-friendly threshold adaptation.
-
-    Score semantics: higher score => more anomalous (shorter average path).
-    """
-
-    __slots__ = (
-        "n_estimators",
-        "max_samples",
-        "contamination",
-        "random_state",
-        "trees",
-        "normalization_factor",
-        "adaptive",
-        "adaptive_target_fpr",
-        "score_buffer_size",
-        "_recent_normal_scores",
-        "dynamic_threshold",
-        "score_mean",
-        "score_std",
-        "_c_subsample",
-    )
-
-    def __init__(
-        self,
-        n_estimators: int = 100,
-        max_samples: int = 256,
-        contamination: float = 0.1,
-        random_state: int = 42,
-        adaptive: bool = True,
-        adaptive_target_fpr: float = 0.05,
-        score_buffer_size: int = 5000,
-    ):
-        self.n_estimators = n_estimators
-        self.max_samples = max_samples
-        self.contamination = contamination
-        self.random_state = random_state
-        self.trees = []
-        self.normalization_factor = None
-        self.adaptive = adaptive
-        self.adaptive_target_fpr = adaptive_target_fpr
-        self.score_buffer_size = score_buffer_size
-        self._recent_normal_scores: deque = deque(maxlen=score_buffer_size)
-        self.dynamic_threshold: Optional[float] = None
-        self.score_mean: Optional[float] = None
-        self.score_std: Optional[float] = None
-        self._c_subsample: Optional[float] = None  # expected path length for subsample size
-
-    def _expected_path_length(self, sample_size: int) -> float:
-        if sample_size <= 1:
-            return 0.0
-        return 2.0 * (np.log(sample_size - 1) + 0.5772156649) - (2.0 * (sample_size - 1) / sample_size)
-
-    def _sample_data(self, X: np.ndarray) -> np.ndarray:
-        """Sample data for tree construction"""
-        n_samples = X.shape[0]
-        sample_size = min(self.max_samples, n_samples)
-        indices = np.random.choice(n_samples, size=sample_size, replace=False)
-        return X[indices]
-
-    def fit(self, X: np.ndarray) -> 'IsolationForest':
-        """Train the isolation forest on normal data only with enhanced diversity"""
-        logger.info(f"Training Isolation Forest with {self.n_estimators} trees")
-        logger.info(f"Training on {len(X)} normal samples only")
-        np.random.seed(self.random_state)
-
-        # Adaptive max_samples based on dataset size
-        optimal_samples = min(self.max_samples, max(64, int(np.sqrt(X.shape[0]))))
-        self.max_samples = optimal_samples
-        logger.info(f"Using adaptive max_samples: {self.max_samples}")
-
-        # Precompute expected path length for subsample size
-        self._c_subsample = self._expected_path_length(self.max_samples)
-
-        # Build trees with enhanced diversity
-        self.trees = []
-        for i in range(self.n_estimators):
-            # Adaptive depth based on subsample size
-            adaptive_depth = max(8, int(np.log2(self.max_samples)) + 3)
-            
-            tree = IsolationTree(
-                max_depth=adaptive_depth, 
-                random_state=self.random_state + i * 1000  # Better seed separation
-            )
-            
-            # Enhanced sampling (random or bootstrap)
-            sample_data = self._sample_data_enhanced(X, i)
-            tree.fit(sample_data)
-            self.trees.append(tree)
-
-        # Improved normalization factor
-        self.normalization_factor = self._c_subsample if self._c_subsample and self._c_subsample > 0 else 1.0
-        logger.info(f"Normalization factor: {self.normalization_factor:.4f}")
-        return self
-
-    def _sample_data_enhanced(self, X: np.ndarray, tree_idx: int) -> np.ndarray:
-        """Enhanced sampling with better diversity (random or bootstrap)."""
-        n_samples = X.shape[0]
-        sample_size = min(self.max_samples, n_samples)
-        if tree_idx % 2 == 0:
-            idx = np.random.choice(n_samples, size=sample_size, replace=False)
-        else:
-            idx = np.random.choice(n_samples, size=sample_size, replace=True)
-        return X[idx]
-
-    # Removed unused _calculate_normalization_factor
-
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        """Compute anomaly scores (higher score = more anomalous).
-
-        Uses normalized path lengths with correct Isolation Forest formula.
-        Returns scores in range [0,1] where values close to 1 are anomalies.
-        """
-        if not self.trees:
-            raise ValueError("Model not trained yet. Call fit() first.")
-
-        all_path_lengths = []
-        for tree in self.trees:
-            all_path_lengths.append(tree.predict(X))
-        avg_path_lengths = np.mean(all_path_lengths, axis=0)
-        
-        # Correct Isolation Forest anomaly score formula
-        norm_factor = self.normalization_factor if self.normalization_factor and self.normalization_factor > 0 else 1.0
-        
-        # Standard IF formula: s(x,n) = 2^(-E(h(x))/c(n))
-        # But we want higher scores for anomalies, so we use: 1 - 2^(-E(h(x))/c(n))
-        raw_scores = 2 ** (-avg_path_lengths / norm_factor)
-        
-        # Invert so that anomalies (short paths) get higher scores
-        anomaly_scores = 1.0 - raw_scores
-        
-        # Ensure scores are in [0,1] range
-        anomaly_scores = np.clip(anomaly_scores, 0.0, 1.0)
-        
-        return anomaly_scores
-
-    def score_samples(self, X: np.ndarray) -> np.ndarray:
-        """Alias for predict() for integration clarity."""
-        return self.predict(X)
-
-    def update_score_distribution(self, normal_scores: np.ndarray):
-        """Update running distribution stats with new presumed-normal scores."""
-        if normal_scores.size == 0:
-            return
-            
-        # Add scores to buffer
-        self._recent_normal_scores.extend(normal_scores.tolist())
-        arr = np.fromiter(self._recent_normal_scores, dtype=float)
-        
-        # Robust statistics using trimmed mean/std
-        # Remove extreme outliers (top/bottom 5%) for more stable estimates
-        if arr.size > 20:  # Need sufficient samples
-            trimmed_arr = np.sort(arr)[int(0.05*len(arr)):int(0.95*len(arr))]
-            self.score_mean = float(trimmed_arr.mean())
-            self.score_std = float(trimmed_arr.std(ddof=1)) if trimmed_arr.size > 1 else 0.0
-        else:
-            self.score_mean = float(arr.mean())
-            self.score_std = float(arr.std(ddof=1)) if arr.size > 1 else 0.0
-
-        # Enhanced adaptive threshold with temporal smoothing
-        if self.adaptive and arr.size > 10:
-            # Use robust quantile estimation
-            target_high_quantile = 1.0 - float(self.adaptive_target_fpr)
-            new_threshold = float(np.quantile(arr, target_high_quantile))
-            
-            # Temporal smoothing to prevent threshold oscillations
-            if self.dynamic_threshold is not None:
-                smoothing_factor = 0.1  # Adjust based on adaptation speed needs
-                self.dynamic_threshold = (1 - smoothing_factor) * self.dynamic_threshold + smoothing_factor * new_threshold
-            else:
-                self.dynamic_threshold = new_threshold
+        for fpath in file_list:
+            try:
+                sep = detect_sep(open(fpath, 'rb').read(8192).decode('utf-8', errors='ignore'))
                 
-            # Ensure threshold is reasonable (between mean and mean + 3*std)
-            if self.score_std > 0:
-                min_threshold = self.score_mean
-                max_threshold = self.score_mean + 3 * self.score_std
-                self.dynamic_threshold = np.clip(self.dynamic_threshold, min_threshold, max_threshold)
+                # UGR16 files are headerless - define standard column names
+                ugr16_cols = ["timestamp","duration","src_ip","dst_ip","src_port","dst_port","protocol","flags","tos","fwd","packets","bytes","label"]
+                reader = pd.read_csv(fpath, chunksize=chunksize, sep=sep, on_bad_lines="skip", header=None, names=ugr16_cols)
 
-    def get_anomaly_threshold(self, fallback_threshold: float) -> float:
-        """Return dynamic threshold if available else fallback."""
-        return self.dynamic_threshold if self.dynamic_threshold is not None else fallback_threshold
+                for i, chunk in enumerate(reader, 1):
+                    mapping = {k: find_col(chunk.columns, v) for k, v in COLS.items()}
+                    derived = derive_features(chunk, mapping)
+                    derived["label"] = detect_label(chunk, mapping)
+                    derived = derived.fillna(0).dropna(how='all')
+                    
+                    if features is None:
+                        features = [c for c in derived.columns if c != "label"]
+                        with open(os.path.join(output_dir, "features.json"), "w") as f:
+                            json.dump(features, f)
+                    
+                    df = derived if keep_attacks else derived[derived["label"] == 0]
+                    
+                    if len(df):
+                        df.to_csv(out_path, index=False, header=not os.path.exists(out_path), mode="a")
+                        if keep_attacks: test_rows += len(df)
+                        else: train_rows += len(df)
+                    
+                    total_rows += len(derived)
+                    if i % 20 == 0:
+                        logger.info(f"{os.path.basename(fpath)}: processed {i} chunks; total_rows={total_rows}")
+                    if max_rows and total_rows >= max_rows: return
+                    
+            except Exception as e:
+                logger.warning(f"Skip {fpath}: {e}")
+                
+    process_files(train_files, train_path, keep_attacks=False)
+    process_files(test_files, test_path, keep_attacks=True)
+    
+    meta = {
+        "total_rows": total_rows, "train_rows": train_rows, "test_rows": test_rows,
+        "features": features, "generated": datetime.now().isoformat()
+    }
+    try:
+        with open(os.path.join(output_dir, "meta.json"), "w") as f:
+            json.dump(meta, f)
+    except OSError as e:
+        logger.warning(f"Could not write meta.json: {e}")
+    
+    logger.info(f"Preprocessing complete: {train_rows} train, {test_rows} test")
+    return output_dir
 
-    def is_anomaly(self, scores: np.ndarray, base_threshold: float) -> np.ndarray:
-        """Vectorized anomaly decision using dynamic threshold if present."""
-        thresh = self.get_anomaly_threshold(base_threshold)
-        return scores >= thresh
-
-    def partial_refit(self, X_new: np.ndarray, replace_fraction: float = 0.2):
-        """Replace a fraction of trees with new ones trained on recent normal data (concept drift adaptation)."""
-        if not self.trees:
-            raise ValueError("Model not trained yet")
-
-        n_replace = max(1, int(len(self.trees) * replace_fraction))
-        indices = np.random.choice(len(self.trees), size=n_replace, replace=False)
-        for idx in indices:
-            adaptive_depth = max(8, int(np.log2(self.max_samples)) + 3)
-            tree = IsolationTree(max_depth=adaptive_depth, random_state=self.random_state + np.random.randint(0, 1_000_000))
-            sample_data = self._sample_data_enhanced(X_new, idx)
-            tree.fit(sample_data)
-            self.trees[idx] = tree
-
-        # Optionally update normalization factor to reflect blended data size
-        self.normalization_factor = self._c_subsample if self._c_subsample else self._expected_path_length(
-            min(self.max_samples, X_new.shape[0])
-        )
-
-        # After refit, optionally refresh threshold stats using new trees
-        new_scores = self.predict(X_new)
-        self.update_score_distribution(new_scores)
-
-
-class UGR16AnomalyDetector:
-    """UGR16 network traffic anomaly detection using Isolation Forest.
-
-    Defines attacks using core attack labels (excluding 'labelblacklist').
-    """
-
-    def __init__(self, variant: str = 'v1'):
-        self.variant = variant
-        self.isolation_forest = None  # type: Optional[IsolationForest]
-        self.feature_names = None  # type: Optional[List[str]]
-        self.training_time = None  # type: Optional[float]
-        self.anomaly_threshold = None  # type: Optional[float]
-        self.scaler_params = None  # type: Optional[Dict[str, np.ndarray]]
-        self.scaler = None  # type: Optional[RobustScaler]
-        self.pseudo_normal_used = False  # retained for compatibility; will stay False now
-
-    def load_ugr16_data(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        """Load UGR16 dataset"""
-        logger.info(f"Loading UGR16 dataset variant: {self.variant}")
-
-        # Load training data
-        X_train_file = f'UGR16_FeatureData/csv/UGR16{self.variant}.Xtrain.csv'
-        Y_train_file = f'UGR16_FeatureData/csv/UGR16{self.variant}.Ytrain.csv'
-
-        # Load test data
-        X_test_file = f'UGR16_FeatureData/csv/UGR16{self.variant}.Xtest.csv'
-        Y_test_file = f'UGR16_FeatureData/csv/UGR16{self.variant}.Ytest.csv'
-
-        # Check if files exist
-        if not all(os.path.exists(f) for f in [X_train_file, Y_train_file, X_test_file, Y_test_file]):
-            raise FileNotFoundError(f"UGR16 {self.variant} files not found")
-
-        # Load data
-        X_train = pd.read_csv(X_train_file, index_col=0)
-        Y_train = pd.read_csv(Y_train_file, index_col=0)
-        X_test = pd.read_csv(X_test_file, index_col=0)
-        Y_test = pd.read_csv(Y_test_file, index_col=0)
-
-        logger.info(f"Loaded UGR16 {self.variant}:")
-        logger.info(f" X_train: {X_train.shape}")
-        logger.info(f" Y_train: {Y_train.shape}")
-        logger.info(f" X_test: {X_test.shape}")
-        logger.info(f" Y_test: {Y_test.shape}")
-        return X_train, Y_train, X_test, Y_test
-
-    def preprocess_for_anomaly_detection(
-        self,
-        X_train: pd.DataFrame,
-        Y_train: pd.DataFrame,
-        X_test: pd.DataFrame,
-        Y_test: pd.DataFrame,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Preprocess UGR16 data for anomaly detection.
-
-        Normal = rows with zero counts across core attack labels (excluding 'labelblacklist').
-        Attack = any row with a non-zero count in those core attack labels.
-        """
-
-        logger.info("Preprocessing UGR16 data (core attack labels define anomalies)")
-        core_attack_labels = [c for c in Y_train.columns if c != 'labelblacklist']
-        if not core_attack_labels:
-            raise ValueError("No attack label columns found (excluding 'labelblacklist')")
-
-        # Determine binary labels
-        train_attack_vector = (Y_train[core_attack_labels].sum(axis=1) > 0).astype(int)
-        test_attack_vector = (Y_test[core_attack_labels].sum(axis=1) > 0).astype(int)
-
-        logger.info(
-            f"Training data - Normal: {(train_attack_vector==0).sum()}, Attacks: {(train_attack_vector==1).sum()}"
-        )
-        logger.info(
-            f"Test data - Normal: {(test_attack_vector==0).sum()}, Attacks: {(test_attack_vector==1).sum()}"
-        )
-        if (train_attack_vector == 0).sum() == 0:
-            raise ValueError("No normal samples found in training set with current core attack label definition.")
-
-        # Masks
-        train_normal_mask = (train_attack_vector == 0)
-        test_normal_mask = (test_attack_vector == 0)
-
-        # Separate
-        X_train_normal = X_train[train_normal_mask].values
-        X_train_attack = X_train[~train_normal_mask].values
-        X_test_normal = X_test[test_normal_mask].values
-        X_test_attack = X_test[~test_normal_mask].values
-
-        # Fit robust scaler on true-normal only, apply consistently
-        logger.info("Fitting robust scaler on true-normal data...")
-        self.scaler = RobustScaler().fit(X_train_normal)
-        X_train_normal = self.scaler.transform(X_train_normal)
-        X_train_attack = self.scaler.transform(X_train_attack) if X_train_attack.size else X_train_attack
-        X_test_normal = self.scaler.transform(X_test_normal)
-        X_test_attack = self.scaler.transform(X_test_attack) if X_test_attack.size else X_test_attack
-
-        self.feature_names = X_train.columns.tolist()
-        self.scaler_params = self.scaler.get_params()
-
-        logger.info("Preprocessed data shapes (true normal definition):")
-        logger.info(f" Train normal: {X_train_normal.shape}")
-        logger.info(f" Train attack: {X_train_attack.shape}")
-        logger.info(f" Test normal: {X_test_normal.shape}")
-        logger.info(f" Test attack: {X_test_attack.shape}")
-        return X_train_normal, X_train_attack, X_test_normal, X_test_attack
-
-    def train_anomaly_detector(
-        self,
-        X_train_normal: np.ndarray,
-        n_estimators: int = 50,
-        contamination: float = 0.1,
-        adaptive: bool = True,
-        adaptive_target_fpr: float = 0.05,
-    ) -> None:
-        """Train anomaly detector with enhanced validation and optimization."""
-        logger.info("Training enhanced anomaly detector on normal data only")
-        start_time = datetime.now()
-
-        # Input validation and preprocessing
-        if X_train_normal.shape[0] < 100:
-            logger.warning(f"Training set very small ({X_train_normal.shape[0]} samples). Consider more data.")
+class IDS:
+    def __init__(self):
+        self.model = None
+        self.scaler = None
+        self.features = None
         
-        # Feature selection already applied by scaler; keep dimensions as-is
-        self.active_features = self.scaler.feature_mask if hasattr(self, 'scaler') else None
+    def train(self, X_train, contamination=0.05, n_estimators=150, max_samples=256):
+        logger.info(f"Training Isolation Forest: {n_estimators} estimators, contamination={contamination}")
+        
+        self.scaler = RobustScaler()
+        X_scaled = self.scaler.fit_transform(X_train)
+        
+        # Normalize max_samples to acceptable values for sklearn:
+        ms = max_samples
+        if isinstance(ms, str):
+            ms = 'auto' if ms == 'auto' else 'auto'
+        elif isinstance(ms, float):
+            # fraction (0,1]
+            ms = float(ms)
+            if not (0.0 < ms <= 1.0):
+                ms = 'auto'
+        elif isinstance(ms, (int, np.integer)):
+            ms = int(ms)
+            if ms < 1:
+                ms = 1
+            ms = min(ms, len(X_train))
+        else:
+            ms = 'auto'
 
-        # Enhanced Isolation Forest with better parameters
-        self.isolation_forest = IsolationForest(
-            n_estimators=max(n_estimators, 100),  # Ensure minimum trees for stability
-            max_samples=min(512, max(64, int(np.sqrt(X_train_normal.shape[0])))),  # Adaptive sampling
+        # Use single-threaded training to avoid memory duplication (more stable on large datasets)
+        self.model = IsolationForest(
+            n_estimators=n_estimators,
             contamination=contamination,
+            max_samples=ms,
             random_state=42,
-            adaptive=adaptive,
-            adaptive_target_fpr=adaptive_target_fpr,
+            n_jobs=1
         )
+        self.model.fit(X_scaled)
         
-        self.isolation_forest.fit(X_train_normal)
-        self.training_time = (datetime.now() - start_time).total_seconds()
-        logger.info(f"Enhanced anomaly detector trained in {self.training_time:.2f} seconds")
-
-        # Enhanced threshold computation with cross-validation
-        train_scores = self.isolation_forest.predict(X_train_normal)
+        logger.info("Training complete")
         
-        # Use more robust threshold estimation
-        # Multiple quantiles for robustness
-        quantiles = [0.90, 0.95, 0.99]
-        contamination_levels = [0.10, 0.05, 0.01]
-        
-        best_threshold = None
-        best_score = float('-inf')
-        
-        for q, c in zip(quantiles, contamination_levels):
-            if abs(c - contamination) < 0.02:  # Close to target contamination
-                threshold_candidate = float(np.quantile(train_scores, q))
-                
-                # Score based on separation between normal scores and threshold
-                separation = threshold_candidate - np.mean(train_scores)
-                stability = -np.std(train_scores[train_scores < threshold_candidate])  # Lower std is better
-                score = separation + stability
-                
-                if score > best_score:
-                    best_score = score
-                    best_threshold = threshold_candidate
-        
-        self.anomaly_threshold = best_threshold if best_threshold is not None else float(np.quantile(train_scores, 1.0 - contamination))
-        
-        # Initialize adaptive threshold system
-        self.isolation_forest.update_score_distribution(train_scores)
-        
-        logger.info(f"Static anomaly threshold: {self.anomaly_threshold:.4f}")
-        logger.info(f"Training score stats - Mean: {np.mean(train_scores):.4f}, Std: {np.std(train_scores):.4f}")
-        
-        if self.isolation_forest.dynamic_threshold is not None:
-            logger.info(f"Initial dynamic threshold (FPR {adaptive_target_fpr:.2%}): {self.isolation_forest.dynamic_threshold:.4f}")
-        
-        # Validation: Check that threshold makes sense
-        anomaly_rate = np.mean(train_scores >= self.anomaly_threshold)
-        logger.info(f"Training anomaly rate with threshold: {anomaly_rate:.2%} (target: {contamination:.2%})")
-        
-        if anomaly_rate > contamination * 2:
-            logger.warning("Threshold may be too low - high false positive rate expected")
-        elif anomaly_rate < contamination * 0.5:
-            logger.warning("Threshold may be too high - low sensitivity expected")
-
-    def transform_features(self, features: np.ndarray) -> np.ndarray:
-        """Scale raw feature vector(s) using the fitted robust scaler."""
-        if not hasattr(self, 'scaler') or self.scaler is None:
-            raise ValueError("Scaler not available; call preprocess_for_anomaly_detection first")
-        feats = features if features.ndim == 2 else features.reshape(1, -1)
-        return self.scaler.transform(feats)
-
-    def score(self, scaled_features: np.ndarray) -> np.ndarray:
-        """Return anomaly scores for scaled feature matrix."""
-        if self.isolation_forest is None:
+    def predict(self, X):
+        if self.model is None or self.scaler is None:
             raise ValueError("Model not trained")
-        return self.isolation_forest.predict(scaled_features)
-
-    def infer(self, raw_features: np.ndarray, update_distribution: bool = True) -> Dict[str, Any]:
-        """Enhanced inference with production optimizations (anomaly if score >= threshold)."""
-        if self.isolation_forest is None:
+        X_scaled = self.scaler.transform(X)
+        return self.model.predict(X_scaled)
+    
+    def decision_function(self, X):
+        if self.model is None or self.scaler is None:
             raise ValueError("Model not trained")
-            
-        # Input validation for production safety
-        if raw_features.size == 0:
-            return {'scores': np.array([]), 'threshold': 0.5, 'anomalies': np.array([]), 'anomaly_indices': np.array([])}
+        X_scaled = self.scaler.transform(X)
+        return self.model.decision_function(X_scaled)
         
-        # Ensure proper shape
-        if raw_features.ndim == 1:
-            raw_features = raw_features.reshape(1, -1)
+    def save(self, path):
+        joblib.dump(self, path, compress=3)
         
-        # Feature transformation with error handling
-        try:
-            scaled = self.transform_features(raw_features)
-        except Exception as e:
-            logger.error(f"Feature transformation failed: {e}")
-            # Fallback: basic normalization
-            scaled = np.clip(raw_features, 0, 1)
-        
-        # Anomaly scoring
-        scores = self.score(scaled)
-        threshold = self.isolation_forest.get_anomaly_threshold(
-            float(self.anomaly_threshold) if self.anomaly_threshold is not None else 0.5
-        )
-        
-        # Anomaly detection with confidence scoring
-        anomalies = scores >= threshold
-        
-        # Compute confidence scores (distance from threshold)
-        confidence = np.abs(scores - threshold) / max(threshold, 1e-6)
-        
-        # Adaptive threshold update (only for normal-looking samples)
-        if update_distribution and self.isolation_forest and scores.ndim == 1:
-            # Only update with high-confidence normal samples to prevent contamination
-            normal_mask = ~anomalies
-            high_confidence_normal = normal_mask & (confidence > 0.1)  # Sufficient distance from threshold
-            
-            if np.any(high_confidence_normal):
-                normal_scores = scores[high_confidence_normal]
-                self.isolation_forest.update_score_distribution(normal_scores)
-        
-        return {
-            'scores': scores,
-            'threshold': threshold,
-            'anomalies': anomalies,
-            'anomaly_indices': np.where(anomalies)[0],
-            'confidence': confidence,
-            'n_anomalies': np.sum(anomalies),
-            'anomaly_rate': np.mean(anomalies),
-        }
+    @classmethod  
+    def load(cls, path):
+        return joblib.load(path)
 
-    def minimal_artifact(self) -> Dict[str, Any]:
-        """Return minimal dictionary needed for real-time serving (for JSON/joblib)."""
-        return {
-            'variant': self.variant,
-            'feature_names': self.feature_names,
-            'scaler_params': self.scaler_params,
-            'anomaly_threshold': self.anomaly_threshold,
-            'dynamic_threshold': self.isolation_forest.dynamic_threshold if self.isolation_forest else None,
-            'n_estimators': self.isolation_forest.n_estimators if self.isolation_forest else None,
-            'timestamp': datetime.now().isoformat(),
-        }
+def _parse_contamination(val: str):
+    v = str(val).strip().lower()
+    if v == 'auto':
+        return 'auto'
+    try:
+        f = float(v)
+        if 0.0 < f < 0.5:
+            return f
+    except Exception:
+        pass
+    # Fallback sensible default for clean training
+    return 'auto'
 
-    def evaluate_anomaly_detector(
-        self,
-        X_test_normal: np.ndarray,
-        X_test_attack: np.ndarray,
-    ) -> Dict[str, float]:
-        """Evaluate anomaly detector performance (binary). Anomaly if score >= threshold."""
-        if self.isolation_forest is None:
-            raise ValueError("Model not trained")
-        normal_scores = self.isolation_forest.predict(X_test_normal)
-        attack_scores = self.isolation_forest.predict(X_test_attack)
-        threshold = self.isolation_forest.get_anomaly_threshold(
-            float(self.anomaly_threshold) if self.anomaly_threshold is not None else 0.5
-        )
-        normal_anomalies = np.sum(normal_scores >= threshold)
-        attack_detected = np.sum(attack_scores >= threshold)
-        total_normal = len(normal_scores)
-        total_attacks = len(attack_scores)
-        true_negatives = total_normal - normal_anomalies
-        false_positives = normal_anomalies
-        false_negatives = total_attacks - attack_detected
-        true_positives = attack_detected
-        accuracy = (true_positives + true_negatives) / (total_normal + total_attacks) if (total_normal + total_attacks) > 0 else 0
-        precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
-        recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
-        f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-        fpr = false_positives / total_normal if total_normal > 0 else 0
-        tpr = true_positives / total_attacks if total_attacks > 0 else 0
-
-        logger.info("Anomaly Detection Performance (score >= threshold considered anomaly):")
-        logger.info(f" Accuracy: {accuracy:.4f}")
-        logger.info(f" Precision: {precision:.4f}")
-        logger.info(f" Recall: {recall:.4f}")
-        logger.info(f" F1 Score: {f1_score:.4f}")
-        logger.info(f" False Positive Rate: {fpr:.4f}")
-        logger.info(f" True Positive Rate: {tpr:.4f}")
-        logger.info(f" Normal flagged: {normal_anomalies}/{total_normal} ({fpr:.2%}) Threshold: {threshold:.4f}")
-        logger.info(f" Attacks detected: {attack_detected}/{total_attacks} ({tpr:.2%})")
-        if self.pseudo_normal_used:
-            logger.warning("Metrics computed using pseudo-normal heuristic subset (no explicit normal samples).")
-        return {
-            'accuracy': float(accuracy),
-            'precision': float(precision),
-            'recall': float(recall),
-            'f1_score': float(f1_score),
-            'false_positive_rate': float(fpr),
-            'true_positive_rate': float(tpr),
-            'normal_anomalies': int(normal_anomalies),
-            'attacks_detected': int(attack_detected),
-            'total_normal': int(total_normal),
-            'total_attacks': int(total_attacks),
-        }
-
-    def save_model(self, filepath: str) -> None:
-        """Persist model with metadata for real-time inference."""
-        if self.isolation_forest is None:
-            raise ValueError("No model to save")
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        import joblib
-        model_data = {
-            'isolation_forest': self.isolation_forest,
-            'anomaly_threshold': self.anomaly_threshold,
-            'dynamic_threshold': self.isolation_forest.dynamic_threshold,
-            'training_time': self.training_time,
-            'variant': self.variant,
-            'feature_names': self.feature_names,
-            'scaler_params': self.scaler_params,
-            'pseudo_normal_used': self.pseudo_normal_used,
-            'timestamp': datetime.now().isoformat(),
-        }
-        joblib.dump(model_data, filepath, compress=3)
-        logger.info(f"Model saved: {filepath}")
-
-    def save_metrics(self, metrics: Dict[str, float], timestamp: Optional[str] = None) -> None:
-        """Save metrics snapshot and append to history."""
-        if timestamp is None:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        os.makedirs('metrics', exist_ok=True)
-        row = {**metrics, 'variant': self.variant, 'timestamp': timestamp, 'pseudo_normal_used': self.pseudo_normal_used}
-        import pandas as pd  # re-imported for locality as in original
-        df = pd.DataFrame([row])
-        out_file = f'metrics/ugr16_anomaly_metrics_{self.variant}_{timestamp}.csv'
-        df.to_csv(out_file, index=False)
-        hist_file = 'metrics/ugr16_anomaly_metrics_history.csv'
-        if os.path.exists(hist_file):
-            prev = pd.read_csv(hist_file)
-            df = pd.concat([prev, df], ignore_index=True)
-            df.to_csv(hist_file, index=False)
-        logger.info(f"Metrics saved: {out_file}; history updated: {hist_file}")
-
+def _parse_max_samples(val: str, n_rows: int):
+    v = str(val).strip().lower()
+    if v == 'auto':
+        return 'auto'
+    try:
+        if '%' in v:
+            frac = float(v.replace('%',''))/100.0
+            return min(max(frac, 1e-4), 1.0)
+        f = float(v)
+        if 0.0 < f <= 1.0:
+            return f
+        i = int(round(f))
+        return min(max(i, 1), n_rows)
+    except Exception:
+        return 'auto'
 
 def main():
-    """Train and evaluate the UGR16 Isolation Forest anomaly detector (real-time optimized)."""
-
-    parser = argparse.ArgumentParser(description="Train UGR16 Isolation Forest anomaly detector")
-    parser.add_argument('--variant', default='v1')
-    parser.add_argument('--preprocessed-dir', default=None, help='Directory containing preprocessed train/test CSVs (from data_prep/preprocess_ugr16.py)')
-    parser.add_argument('--n_estimators', type=int, default=60)
-    parser.add_argument('--contamination', type=float, default=0.05)
-    parser.add_argument('--adaptive', action='store_true', default=False)
-    parser.add_argument('--adaptive_target_fpr', type=float, default=0.05)
-    parser.add_argument('--model_dir', default='models')
-    parser.add_argument('--no_eval', action='store_true')
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--input', nargs='+', required=True)
+    parser.add_argument('--output', default='preprocessed')
+    parser.add_argument('--model-output', default='model.joblib')
+    parser.add_argument('--chunksize', type=int, default=100000)
+    parser.add_argument('--max-rows', type=int)
+    parser.add_argument('--contamination', type=str, default='auto')
+    parser.add_argument('--n-estimators', type=int, default=150)
+    parser.add_argument('--max-samples', type=str, default='auto', help="IsolationForest max_samples: 'auto', fraction (0-1], integer, or percent like '10%'")
+    parser.add_argument('--train-rows', type=int, default=None, help='Train from at most N rows of train.csv using streaming chunks (avoids loading the full CSV).')
+    parser.add_argument('--skip-preprocess', action='store_true', help='Skip preprocessing and use existing files in --output (expects train.csv)')
+    # Evaluation controls: use decision_function thresholding instead of model.predict when provided
+    parser.add_argument('--decision-threshold', type=float, default=None,
+                        help='If set, classify as anomaly when decision_function(x) < threshold. Overrides model.predict for evaluation.')
+    parser.add_argument('--target-fpr', type=float, default=None,
+                        help='If set (0-1), calibrate a threshold on test.csv so that approximately this fraction of benign (label=0) are flagged. Overrides model.predict for evaluation.')
     args = parser.parse_args()
-
-    logger.info("Starting UGR16 anomaly detection training pipeline")
-    variant = args.variant
-
-    try:
-        detector = UGR16AnomalyDetector(variant=variant)
-        if args.preprocessed_dir:
-            # Load generic preprocessed format: train.csv/test.csv with a single 'label' column
-            import pandas as pd
-            train_path = os.path.join(args.preprocessed_dir, 'train.csv')
-            test_path = os.path.join(args.preprocessed_dir, 'test.csv')
-            if not os.path.exists(train_path):
-                raise FileNotFoundError(f"Missing preprocessed train.csv in {args.preprocessed_dir}")
-            if not os.path.exists(test_path):
-                raise FileNotFoundError(f"Missing preprocessed test.csv in {args.preprocessed_dir}")
-            train_df = pd.read_csv(train_path)
-            test_df = pd.read_csv(test_path)
-            if 'label' not in train_df.columns or 'label' not in test_df.columns:
-                raise ValueError("Preprocessed files must include a 'label' column")
-            X_train = train_df.drop(columns=['label'])
-            Y_train = pd.DataFrame({'attack': train_df['label'].astype(int)})
-            X_test = test_df.drop(columns=['label'])
-            Y_test = pd.DataFrame({'attack': test_df['label'].astype(int)})
-            X_train_normal, X_train_attack, X_test_normal, X_test_attack = detector.preprocess_for_anomaly_detection(
-                X_train, Y_train, X_test, Y_test
-            )
+    
+    if args.skip_preprocess:
+        logger.info('Skipping preprocessing as requested (--skip-preprocess).')
+    else:
+        try:
+            preprocess_data(args.input, args.output, args.chunksize, args.max_rows)
+        except OSError as e:
+            # If disk is full or similar, allow continuing to training if train.csv already exists.
+            logger.warning(f"Preprocessing failed with OSError: {e}. Will attempt to continue if train.csv exists.")
+    
+    train_path = os.path.join(args.output, 'train.csv')
+    if os.path.exists(train_path):
+        # Load features for consistent column order
+        features_path = os.path.join(args.output, 'features.json')
+        if os.path.exists(features_path):
+            with open(features_path, 'r') as f:
+                features = json.load(f)
+            # Read directly as float32 to reduce peak memory; label as int8
+            dtypes = {c: np.float32 for c in features}
+            dtypes['label'] = np.int8
+            if args.train_rows is not None and args.train_rows > 0:
+                # Stream-limited training: read only up to N rows via chunks
+                target = int(args.train_rows)
+                logger.info(f"Streaming training from {train_path}: target_rows={target}, chunksize={args.chunksize}")
+                frames = []
+                read_rows = 0
+                for chunk in pd.read_csv(
+                    train_path,
+                    usecols=features + ['label'],
+                    dtype=dtypes,
+                    engine='c',
+                    low_memory=False,
+                    chunksize=max(1, min(args.chunksize, target)),
+                ):
+                    need = max(0, target - read_rows)
+                    if need <= 0:
+                        break
+                    take = chunk.iloc[:need]
+                    if not take.empty:
+                        frames.append(take)
+                        read_rows += len(take)
+                    if read_rows >= target:
+                        break
+                if frames:
+                    train_df = pd.concat(frames, ignore_index=True)
+                else:
+                    train_df = pd.DataFrame(columns=features + ['label'])
+                logger.info(f"Streamed rows: {len(train_df)}")
+            else:
+                logger.info(f"Loading training data: {train_path} with {len(features)} features (float32)")
+                train_df = pd.read_csv(
+                    train_path,
+                    usecols=features + ['label'],
+                    dtype=dtypes,
+                    engine='c',
+                    low_memory=False,
+                    memory_map=True
+                )
         else:
-            X_train, Y_train, X_test, Y_test = detector.load_ugr16_data()
-            X_train_normal, X_train_attack, X_test_normal, X_test_attack = detector.preprocess_for_anomaly_detection(
-                X_train, Y_train, X_test, Y_test
-            )
-        detector.train_anomaly_detector(
-            X_train_normal,
-            n_estimators=args.n_estimators,
-            contamination=args.contamination,
-            adaptive=args.adaptive,
-            adaptive_target_fpr=args.adaptive_target_fpr,
-        )
-        if not args.no_eval:
-            metrics = detector.evaluate_anomaly_detector(X_test_normal, X_test_attack)
-            detector.save_metrics(metrics)
+            # Fallback: load then coerce to float32
+            logger.info(f"Loading training data without features.json: {train_path}")
+            if args.train_rows is not None and args.train_rows > 0:
+                target = int(args.train_rows)
+                logger.info(f"Streaming training from {train_path} (no features.json): target_rows={target}, chunksize={args.chunksize}")
+                frames = []
+                read_rows = 0
+                for chunk in pd.read_csv(train_path, engine='c', low_memory=False, chunksize=max(1, min(args.chunksize, target))):
+                    need = max(0, target - read_rows)
+                    if need <= 0:
+                        break
+                    take = chunk.iloc[:need]
+                    if not take.empty:
+                        frames.append(take)
+                        read_rows += len(take)
+                    if read_rows >= target:
+                        break
+                train_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+            else:
+                train_df = pd.read_csv(train_path, engine='c', low_memory=False, memory_map=True)
+            # Ensure numeric dtype and no NaNs (may use more memory)
+            feature_cols = [c for c in train_df.columns if c != 'label']
+            train_df[feature_cols] = train_df[feature_cols].apply(pd.to_numeric, errors='coerce').fillna(0).astype(np.float32)
+            if 'label' in train_df.columns and train_df['label'].dtype != np.int8:
+                try:
+                    train_df['label'] = pd.to_numeric(train_df['label'], errors='coerce').fillna(0).astype(np.int8)
+                except Exception:
+                    train_df['label'] = 0
+        # Basic load stats
+        try:
+            mem_gb = train_df.memory_usage(deep=True).sum() / 1e9
+            logger.info(f"Loaded train.csv: rows={len(train_df)}, cols={len(train_df.columns)}, approx_mem={mem_gb:.2f} GB")
+        except Exception:
+            pass
+        # Build X matrix without copy when possible
+        feature_cols = features if 'features' in locals() else [c for c in train_df.columns if c != 'label']
+        X_train = train_df[feature_cols].to_numpy(dtype=np.float32, copy=False)
+        logger.info(f"Training matrix ready: shape={X_train.shape}, dtype={X_train.dtype}")
+        
+        ids = IDS()
+        # Persist features inside the IDS object for single-object portability
+        try:
+            ids.features = features if 'features' in locals() else feature_cols
+        except Exception:
+            ids.features = feature_cols
+        contamination = _parse_contamination(args.contamination)
+        max_samples = _parse_max_samples(args.max_samples, len(X_train))
+        ids.train(X_train, contamination, args.n_estimators, max_samples=max_samples)
+        ids.save(args.model_output)
+        # Save robust artifacts for forward compatibility
+        root, ext = os.path.splitext(args.model_output)
+        joblib.dump(ids.model, root + '_model.joblib', compress=3)
+        joblib.dump(ids.scaler, root + '_scaler.joblib', compress=3)
+        feat_src = os.path.join(args.output, 'features.json')
+        if os.path.exists(feat_src):
+            with open(feat_src, 'r') as f:
+                joblib.dump(json.load(f), root + '_features.joblib', compress=3)
+        logger.info(f"Model saved: {args.model_output}")
+    
+    test_path = os.path.join(args.output, 'test.csv')
+    if os.path.exists(test_path) and os.path.exists(train_path):
+        # Load test data with same feature order
+        features_path = os.path.join(args.output, 'features.json')
+        if os.path.exists(features_path):
+            with open(features_path, 'r') as f:
+                features = json.load(f)
+            test_df = pd.read_csv(test_path, usecols=features + ['label'])
+        else:
+            test_df = pd.read_csv(test_path)
+        # Ensure numeric dtype
+        feature_cols = [c for c in test_df.columns if c != 'label']
+        test_df[feature_cols] = test_df[feature_cols].apply(pd.to_numeric, errors='coerce').fillna(0).astype(np.float32)
+        X_test = test_df[feature_cols].values
+        y_test = test_df['label'].values
+        
+        # Decision scores: higher = more normal, lower = more anomalous
+        decision_scores = ids.decision_function(X_test)
+        # If thresholding is requested, use it; else fall back to model.predict
+        threshold = None
+        if args.target_fpr is not None:
+            try:
+                benign = decision_scores[test_df['label'].values == 0]
+                if len(benign) > 0 and 0.0 < args.target_fpr < 1.0:
+                    threshold = float(np.quantile(benign, args.target_fpr))
+                    logger.info(f"Calibrated threshold for target_fpr={args.target_fpr:.4f}: threshold={threshold:.6f}")
+                else:
+                    logger.warning("Cannot calibrate threshold: no benign samples or invalid target_fpr; falling back.")
+            except Exception as e:
+                logger.warning(f"Threshold calibration failed: {e}; falling back.")
+        elif args.decision_threshold is not None:
+            threshold = float(args.decision_threshold)
+            logger.info(f"Using provided decision threshold: {threshold:.6f}")
 
-        os.makedirs(args.model_dir, exist_ok=True)
-        model_path = os.path.join(args.model_dir, f'ugr16_anomaly_detector_{variant}.joblib')
-        detector.save_model(model_path)
+        if threshold is not None:
+            pred_binary = (decision_scores < threshold).astype(int)
+        else:
+            predictions = ids.predict(X_test)
+            pred_binary = (predictions == -1).astype(int)
+        # Use inverted scores for AUCs so that higher = more anomalous
+        scores = -decision_scores
+        
+        accuracy = (pred_binary == y_test).mean()
+        tp = ((pred_binary == 1) & (y_test == 1)).sum()
+        fp = ((pred_binary == 1) & (y_test == 0)).sum()
+        fn = ((pred_binary == 0) & (y_test == 1)).sum()
 
-        # Save minimal artifact
-        import joblib
-        joblib.dump(
-            detector.minimal_artifact(),
-            os.path.join(args.model_dir, f'ugr16_anomaly_detector_{variant}_minimal.joblib'),
-            compress=3,
-        )
-        logger.info(f"UGR16 {variant} anomaly detection completed successfully")
-    except Exception as e:
-        logger.error(f"Error in UGR16 anomaly detection: {str(e)}")
-        raise
+        p, r, f1, _ = precision_recall_fscore_support(y_test, pred_binary, average='binary', zero_division=0)
+        # AUCs only if both classes present
+        try:
+            roc = roc_auc_score(y_test, scores)
+        except Exception:
+            roc = float('nan')
+        try:
+            pr_auc = average_precision_score(y_test, scores)
+        except Exception:
+            pr_auc = float('nan')
+        cm = confusion_matrix(y_test, pred_binary, labels=[0,1])
 
+        # FPR for visibility when using thresholds
+        try:
+            tn, fp = cm[0]
+            fpr = fp / max(1, (tn + fp))
+        except Exception:
+            fpr = float('nan')
+        if threshold is not None:
+            logger.info(f"Results: Acc={accuracy:.3f}, Prec={p:.3f}, Rec={r:.3f}, F1={f1:.3f}, ROC-AUC={roc:.3f}, PR-AUC={pr_auc:.3f}, FPR={fpr:.3f}, Thr={threshold:.6f}")
+        else:
+            logger.info(f"Results: Acc={accuracy:.3f}, Prec={p:.3f}, Rec={r:.3f}, F1={f1:.3f}, ROC-AUC={roc:.3f}, PR-AUC={pr_auc:.3f}")
+        logger.info(f"Confusion Matrix [[TN, FP],[FN, TP]]: {cm.tolist()}")
 
 if __name__ == "__main__":
     main()
