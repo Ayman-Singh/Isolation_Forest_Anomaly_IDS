@@ -1,0 +1,15 @@
+2025-10-12 08:14:16,258 - INFO - Loaded existing model from ugr16_if_stream_ms16384_20251003_181922.joblib
+2025-10-12 08:14:16,259 - INFO - Evaluating raw file: UGR-16_dataset/April/april.week3.first10M.csv
+2025-10-12 08:15:54,100 - INFO - Raw eval progress: 1000000 rows
+2025-10-12 08:17:31,719 - INFO - Raw eval progress: 2000000 rows
+2025-10-12 08:19:08,371 - INFO - Raw eval progress: 3000000 rows
+2025-10-12 08:20:45,488 - INFO - Raw eval progress: 4000000 rows
+2025-10-12 08:22:22,449 - INFO - Raw eval progress: 5000000 rows
+2025-10-12 08:23:58,982 - INFO - Raw eval progress: 6000000 rows
+2025-10-12 08:25:34,845 - INFO - Raw eval progress: 7000000 rows
+2025-10-12 08:27:10,618 - INFO - Raw eval progress: 8000000 rows
+2025-10-12 08:28:46,600 - INFO - Raw eval progress: 9000000 rows
+2025-10-12 08:30:30,295 - INFO - Raw Eval Results (model.predict): Acc=0.789, Prec=0.002, Rec=0.160, F1=0.004, ROC-AUC=0.503, PR-AUC=0.002
+2025-10-12 08:30:30,295 - INFO - Confusion Matrix [[TN, FP],[FN, TP]]: [[7883749, 2092940], [19592, 3718]]
+2025-10-12 08:30:34,875 - INFO - Tuned threshold results (metric=f1): Thr=-0.093570, Prec=0.003, Rec=0.651, F1=0.005
+2025-10-12 08:30:34,875 - INFO - Tuned Confusion Matrix [[TN, FP],[FN, TP]]: [[4192518, 5784171], [8129, 15181]]

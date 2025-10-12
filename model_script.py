@@ -7,9 +7,10 @@ import logging
 import joblib
 import json
 from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import RobustScaler, StandardScaler
 from sklearn.metrics import (
     precision_recall_fscore_support,
+    precision_recall_curve,
     roc_auc_score,
     average_precision_score,
     confusion_matrix,
@@ -226,8 +227,8 @@ class IDS:
         self.scaler = None
         self.features = None
         
-    def train(self, X_train, contamination=0.05, n_estimators=150, max_samples=256):
-        logger.info(f"Training Isolation Forest: {n_estimators} estimators, contamination={contamination}")
+    def train(self, X_train, contamination=0.05, n_estimators=150, max_samples=256, n_jobs=1, verbose=0, progress_step: int = 0):
+        logger.info(f"Training Isolation Forest: {n_estimators} estimators, contamination={contamination}, n_jobs={n_jobs}")
         
         self.scaler = RobustScaler()
         X_scaled = self.scaler.fit_transform(X_train)
@@ -250,14 +251,39 @@ class IDS:
             ms = 'auto'
 
         # Use single-threaded training to avoid memory duplication (more stable on large datasets)
-        self.model = IsolationForest(
-            n_estimators=n_estimators,
-            contamination=contamination,
-            max_samples=ms,
-            random_state=42,
-            n_jobs=1
-        )
-        self.model.fit(X_scaled)
+        if progress_step and isinstance(progress_step, int) and progress_step > 0:
+            # Warm-start incremental build for visible progress; final model equivalent in parameters
+            self.model = IsolationForest(
+                n_estimators=0,
+                contamination=contamination,
+                max_samples=ms,
+                random_state=42,
+                n_jobs=n_jobs,
+                warm_start=True,
+                verbose=int(verbose) if verbose is not None else 0,
+            )
+            built = 0
+            total = int(n_estimators)
+            step = int(progress_step)
+            while built < total:
+                next_n = min(total, built + step)
+                self.model.set_params(n_estimators=next_n)
+                self.model.fit(X_scaled)
+                built = next_n
+                try:
+                    logger.info(f"Progress: built {built}/{total} trees")
+                except Exception:
+                    pass
+        else:
+            self.model = IsolationForest(
+                n_estimators=n_estimators,
+                contamination=contamination,
+                max_samples=ms,
+                random_state=42,
+                n_jobs=n_jobs,
+                verbose=int(verbose) if verbose is not None else 0
+            )
+            self.model.fit(X_scaled)
         
         logger.info("Training complete")
         
@@ -322,13 +348,155 @@ def main():
     parser.add_argument('--max-samples', type=str, default='auto', help="IsolationForest max_samples: 'auto', fraction (0-1], integer, or percent like '10%'")
     parser.add_argument('--train-rows', type=int, default=None, help='Train from at most N rows of train.csv using streaming chunks (avoids loading the full CSV).')
     parser.add_argument('--skip-preprocess', action='store_true', help='Skip preprocessing and use existing files in --output (expects train.csv)')
+    parser.add_argument('--progress-step', type=int, default=0, help='If >0, build the forest incrementally in steps to log visible progress (trees built).')
+    parser.add_argument('--n-jobs', type=int, default=1, help='IsolationForest n_jobs (set -1 for all cores).')
+    parser.add_argument('--verbose-if', type=int, default=0, help='Set IsolationForest verbose>0 to print per-estimator progress during training.')
+    # Streaming fit for very large datasets: two-pass training without loading all rows
+    parser.add_argument('--stream-fit', action='store_true', help='Enable out-of-core training: first pass computes StandardScaler via partial_fit; second pass adds trees incrementally per chunk with warm_start.')
+    parser.add_argument('--trees-per-chunk', type=int, default=10, help='When --stream-fit, number of trees to add per chunk (approx total ~ chunks * trees-per-chunk unless --n-estimators caps it).')
     # Evaluation controls: use decision_function thresholding instead of model.predict when provided
     parser.add_argument('--decision-threshold', type=float, default=None,
                         help='If set, classify as anomaly when decision_function(x) < threshold. Overrides model.predict for evaluation.')
     parser.add_argument('--target-fpr', type=float, default=None,
                         help='If set (0-1), calibrate a threshold on test.csv so that approximately this fraction of benign (label=0) are flagged. Overrides model.predict for evaluation.')
+    parser.add_argument('--tune-threshold', action='store_true',
+                        help='When evaluating and labels are available, tune a decision threshold using the precision-recall curve (selects threshold that maximizes F1 or product of precision*recall).')
+    parser.add_argument('--tune-metric', type=str, default='f1', choices=['f1','precxrec'],
+                        help="Metric to optimise when tuning threshold: 'f1' (default) or 'precxrec' (precision*recall).")
+    parser.add_argument('--load-model', type=str, default=None,
+                        help='Path to existing IDS joblib to load (skips training). Must be an IDS object saved via ids.save().')
+    # Direct raw evaluation (no preprocessing directory needed): derive features, keep attacks
+    parser.add_argument('--eval-raw', nargs='+', type=str,
+                        help='One or more raw UGR16-like CSV files (headerless) to evaluate directly. Attacks are NOT dropped. Requires --load-model.')
+    parser.add_argument('--eval-max-rows', type=int, default=None,
+                        help='Optional row cap when using --eval-raw (across all provided files).')
     args = parser.parse_args()
+    # All imports done at top; no mid-function imports needed.
     
+    ids = None
+    if args.load_model:
+        if not os.path.exists(args.load_model):
+            logger.error(f"--load-model path not found: {args.load_model}")
+            return
+        try:
+            ids = IDS.load(args.load_model)
+            logger.info(f"Loaded existing model from {args.load_model}")
+        except Exception as e:
+            logger.error(f"Failed to load model {args.load_model}: {e}")
+            return
+
+    # Fast path: raw evaluation only (derive features in-memory, keep all rows including attacks)
+    if args.eval_raw:
+        if ids is None:
+            logger.error("--eval-raw requires --load-model (no training in this mode).")
+            return
+        # Features the model expects
+        expected_features = list(ids.features) if getattr(ids, 'features', None) else []
+        if not expected_features:
+            logger.error("Loaded model missing feature list; cannot proceed with --eval-raw.")
+            return
+    # Pandas and numpy already imported at module level
+        total_rows = 0
+        y_all, score_all, pred_all = [], [], []
+        # Standard assumed headerless UGR16 ordering
+        raw_cols = ["timestamp","duration","src_ip","dst_ip","src_port","dst_port","protocol","flags","tos","fwd","packets","bytes","label"]
+
+        def align_features(df):
+            # Add any expected feature missing (zero fill)
+            for f in expected_features:
+                if f not in df.columns:
+                    df[f] = 0.0
+            # Drop extras (keep stable order)
+            return df[expected_features].astype(np.float32)
+
+        attack_tokens = {"blacklist","attack","anomaly","malicious","botnet","scan","dos"}
+        for path in args.eval_raw:
+            if not os.path.exists(path):
+                logger.warning(f"Eval file not found, skipping: {path}")
+                continue
+            logger.info(f"Evaluating raw file: {path}")
+            try:
+                for chunk in pd.read_csv(
+                    path,
+                    header=None,
+                    names=raw_cols,
+                    sep=',',
+                    on_bad_lines='skip',
+                    engine='c',
+                    low_memory=False,
+                    chunksize=max(1, args.chunksize)
+                ):
+                    if args.eval_max_rows and total_rows >= args.eval_max_rows:
+                        break
+                    # Derive features using existing helpers
+                    mapping = {k: find_col(chunk.columns, v) for k, v in COLS.items()}
+                    derived = derive_features(chunk, mapping)
+                    last_tok = chunk.iloc[:, -1].astype(str).str.lower()
+                    labels = last_tok.isin(attack_tokens).astype(np.int8)
+                    # Align to model features
+                    feat_mat = align_features(derived)
+                    X = feat_mat.to_numpy(dtype=np.float32, copy=False)
+                    scores = ids.decision_function(X)
+                    preds = (ids.predict(X) == -1).astype(np.int8)
+                    y_all.append(labels.values)
+                    score_all.append(scores)
+                    pred_all.append(preds)
+                    total_rows += len(chunk)
+                    if args.eval_max_rows and total_rows >= args.eval_max_rows:
+                        break
+                    if total_rows and total_rows % 1_000_000 == 0:
+                        logger.info(f"Raw eval progress: {total_rows} rows")
+                    # Explicit cleanup of large temporaries
+                    del chunk, derived, labels, feat_mat, X, scores, preds
+            except Exception as e:
+                logger.warning(f"Failed processing {path}: {e}")
+            if args.eval_max_rows and total_rows >= args.eval_max_rows:
+                break
+        if not y_all:
+            logger.error("No evaluation data processed from --eval-raw inputs.")
+            return
+        y = np.concatenate(y_all)
+        scores = np.concatenate(score_all)
+        preds = np.concatenate(pred_all)
+        acc = (preds == y).mean()
+        p, r, f1, _ = precision_recall_fscore_support(y, preds, average='binary', zero_division=0)
+        try:
+            roc = roc_auc_score(y, -scores)
+        except Exception:
+            roc = float('nan')
+        try:
+            pr_auc = average_precision_score(y, -scores)
+        except Exception:
+            pr_auc = float('nan')
+        cm = confusion_matrix(y, preds, labels=[0,1])
+        logger.info(f"Raw Eval Results (model.predict): Acc={acc:.3f}, Prec={p:.3f}, Rec={r:.3f}, F1={f1:.3f}, ROC-AUC={roc:.3f}, PR-AUC={pr_auc:.3f}")
+        logger.info(f"Confusion Matrix [[TN, FP],[FN, TP]]: {cm.tolist()}")
+
+        # Optional: tune a decision threshold using precision-recall curve on labeled eval data
+        if args.tune_threshold:
+            try:
+                anomaly_scores = -scores  # higher = more anomalous
+                prec, rec, thr = precision_recall_curve(y, anomaly_scores)
+                if len(thr) == 0:
+                    logger.warning("Threshold tuning: no thresholds returned by precision_recall_curve; skipping tuning.")
+                else:
+                    if args.tune_metric == 'precxrec':
+                        metric_vals = prec[:-1] * rec[:-1]
+                    else:  # f1
+                        denom = (prec[:-1] + rec[:-1])
+                        metric_vals = (2 * prec[:-1] * rec[:-1]) / np.where(denom == 0, 1e-12, denom)
+                    best_idx = int(np.nanargmax(metric_vals))
+                    best_thr = float(thr[best_idx])
+                    tuned_preds = (anomaly_scores >= best_thr).astype(np.int8)
+                    tp_t, fp_t, fn_t = ((tuned_preds == 1) & (y == 1)).sum(), ((tuned_preds == 1) & (y == 0)).sum(), ((tuned_preds == 0) & (y == 1)).sum()
+                    p2, r2, f12, _ = precision_recall_fscore_support(y, tuned_preds, average='binary', zero_division=0)
+                    cm_t = confusion_matrix(y, tuned_preds, labels=[0,1])
+                    logger.info(f"Tuned threshold results (metric={args.tune_metric}): Thr={best_thr:.6f}, Prec={p2:.3f}, Rec={r2:.3f}, F1={f12:.3f}")
+                    logger.info(f"Tuned Confusion Matrix [[TN, FP],[FN, TP]]: {cm_t.tolist()}")
+            except Exception as e:
+                logger.warning(f"Threshold tuning failed during raw eval: {e}")
+        return
+
     if args.skip_preprocess:
         logger.info('Skipping preprocessing as requested (--skip-preprocess).')
     else:
@@ -339,7 +507,8 @@ def main():
             logger.warning(f"Preprocessing failed with OSError: {e}. Will attempt to continue if train.csv exists.")
     
     train_path = os.path.join(args.output, 'train.csv')
-    if os.path.exists(train_path):
+    # Only load training data if we are training a new model (ids is None)
+    if ids is None and os.path.exists(train_path):
         # Load features for consistent column order
         features_path = os.path.join(args.output, 'features.json')
         if os.path.exists(features_path):
@@ -348,7 +517,90 @@ def main():
             # Read directly as float32 to reduce peak memory; label as int8
             dtypes = {c: np.float32 for c in features}
             dtypes['label'] = np.int8
-            if args.train_rows is not None and args.train_rows > 0:
+            if args.stream_fit:
+                logger.info("Out-of-core stream-fit enabled: two-pass training without loading all rows.")
+                # First pass: compute StandardScaler via partial_fit
+                scaler = StandardScaler()
+                total_rows_seen = 0
+                chunk_count = 0
+                logger.info(f"Pass1: computing StandardScaler with chunksize={args.chunksize}")
+                for chunk in pd.read_csv(
+                    train_path,
+                    usecols=features + ['label'],
+                    dtype=dtypes,
+                    engine='c',
+                    low_memory=False,
+                    chunksize=max(1, args.chunksize),
+                ):
+                    Xc = chunk[features].to_numpy(dtype=np.float32, copy=False)
+                    scaler.partial_fit(Xc)
+                    total_rows_seen += len(chunk)
+                    chunk_count += 1
+                    if chunk_count % 20 == 0:
+                        logger.info(f"Pass1: seen {total_rows_seen} rows across {chunk_count} chunks")
+                    if args.max_rows and total_rows_seen >= args.max_rows:
+                        break
+                logger.info(f"Pass1 complete: rows={total_rows_seen}, chunks={chunk_count}")
+                # Second pass: build IsolationForest incrementally per chunk
+                contamination = _parse_contamination(args.contamination)
+                max_samples = _parse_max_samples(args.max_samples, max(1, total_rows_seen))
+                model = IsolationForest(
+                    n_estimators=0,
+                    contamination=contamination,
+                    max_samples=max_samples,
+                    random_state=42,
+                    n_jobs=args.n_jobs,
+                    warm_start=True,
+                    verbose=int(args.verbose_if) if args.verbose_if is not None else 0,
+                )
+                built = 0
+                trees_per_chunk = max(1, int(args.trees_per_chunk))
+                max_estimators = int(args.n_estimators) if args.n_estimators else 0
+                rows_second = 0
+                chunks_second = 0
+                logger.info(f"Pass2: building trees per chunk (trees_per_chunk={trees_per_chunk}, max_estimators={max_estimators or -1}, max_samples={max_samples})")
+                for chunk in pd.read_csv(
+                    train_path,
+                    usecols=features + ['label'],
+                    dtype=dtypes,
+                    engine='c',
+                    low_memory=False,
+                    chunksize=max(1, args.chunksize),
+                ):
+                    Xc = chunk[features].to_numpy(dtype=np.float32, copy=False)
+                    Xs = scaler.transform(Xc)
+                    next_n = built + trees_per_chunk
+                    if max_estimators and next_n > max_estimators:
+                        next_n = max_estimators
+                    model.set_params(n_estimators=next_n)
+                    model.fit(Xs)
+                    built = next_n
+                    rows_second += len(chunk)
+                    chunks_second += 1
+                    if chunks_second % 10 == 0:
+                        logger.info(f"Pass2: built {built} trees after {chunks_second} chunks, rows_seen={rows_second}")
+                    if max_estimators and built >= max_estimators:
+                        break
+                    if args.max_rows and rows_second >= args.max_rows:
+                        break
+                logger.info(f"Pass2 complete: total trees={built}, chunks={chunks_second}, rows_seen={rows_second}")
+                # Wrap into IDS object and persist
+                ids = IDS()
+                ids.model = model
+                ids.scaler = scaler
+                try:
+                    ids.features = features
+                except Exception:
+                    ids.features = features
+                ids.save(args.model_output)
+                root, ext = os.path.splitext(args.model_output)
+                joblib.dump(ids.model, root + '_model.joblib', compress=3)
+                joblib.dump(ids.scaler, root + '_scaler.joblib', compress=3)
+                joblib.dump(features, root + '_features.joblib', compress=3)
+                logger.info(f"Model saved (stream-fit): {args.model_output}")
+                # Skip the in-memory path below
+                return
+            elif args.train_rows is not None and args.train_rows > 0:
                 # Stream-limited training: read only up to N rows via chunks
                 target = int(args.train_rows)
                 logger.info(f"Streaming training from {train_path}: target_rows={target}, chunksize={args.chunksize}")
@@ -426,28 +678,30 @@ def main():
         X_train = train_df[feature_cols].to_numpy(dtype=np.float32, copy=False)
         logger.info(f"Training matrix ready: shape={X_train.shape}, dtype={X_train.dtype}")
         
-        ids = IDS()
-        # Persist features inside the IDS object for single-object portability
-        try:
-            ids.features = features if 'features' in locals() else feature_cols
-        except Exception:
-            ids.features = feature_cols
-        contamination = _parse_contamination(args.contamination)
-        max_samples = _parse_max_samples(args.max_samples, len(X_train))
-        ids.train(X_train, contamination, args.n_estimators, max_samples=max_samples)
-        ids.save(args.model_output)
-        # Save robust artifacts for forward compatibility
-        root, ext = os.path.splitext(args.model_output)
-        joblib.dump(ids.model, root + '_model.joblib', compress=3)
-        joblib.dump(ids.scaler, root + '_scaler.joblib', compress=3)
-        feat_src = os.path.join(args.output, 'features.json')
-        if os.path.exists(feat_src):
-            with open(feat_src, 'r') as f:
-                joblib.dump(json.load(f), root + '_features.joblib', compress=3)
-        logger.info(f"Model saved: {args.model_output}")
+        if ids is None:  # Only train if a model was not loaded
+            ids = IDS()
+            # Persist features inside the IDS object for single-object portability
+            try:
+                ids.features = features if 'features' in locals() else feature_cols
+            except Exception:
+                ids.features = feature_cols
+            contamination = _parse_contamination(args.contamination)
+            max_samples = _parse_max_samples(args.max_samples, len(X_train))
+            ids.train(X_train, contamination, args.n_estimators, max_samples=max_samples, n_jobs=args.n_jobs, verbose=args.verbose_if, progress_step=args.progress_step)
+            ids.save(args.model_output)
+            # Save robust artifacts for forward compatibility
+            root, ext = os.path.splitext(args.model_output)
+            joblib.dump(ids.model, root + '_model.joblib', compress=3)
+            joblib.dump(ids.scaler, root + '_scaler.joblib', compress=3)
+            feat_src = os.path.join(args.output, 'features.json')
+            if os.path.exists(feat_src):
+                with open(feat_src, 'r') as f:
+                    joblib.dump(json.load(f), root + '_features.joblib', compress=3)
+            logger.info(f"Model saved: {args.model_output}")
     
     test_path = os.path.join(args.output, 'test.csv')
-    if os.path.exists(test_path) and os.path.exists(train_path):
+    # Evaluate if we have a loaded/trained model and a test.csv (train.csv not required when just evaluating)
+    if ids is not None and os.path.exists(test_path):
         # Load test data with same feature order
         features_path = os.path.join(args.output, 'features.json')
         if os.path.exists(features_path):
@@ -488,6 +742,29 @@ def main():
         # Use inverted scores for AUCs so that higher = more anomalous
         scores = -decision_scores
         
+        # Optional: tune threshold on test.csv labeled data if requested
+        if args.tune_threshold:
+            try:
+                anomaly_scores = scores  # higher = more anomalous (scores already inverted)
+                prec, rec, thr = precision_recall_curve(y_test, anomaly_scores)
+                if len(thr) == 0:
+                    logger.warning("Threshold tuning: no thresholds returned by precision_recall_curve; skipping tuning for test.csv.")
+                else:
+                    if args.tune_metric == 'precxrec':
+                        metric_vals = prec[:-1] * rec[:-1]
+                    else:
+                        denom = (prec[:-1] + rec[:-1])
+                        metric_vals = (2 * prec[:-1] * rec[:-1]) / np.where(denom == 0, 1e-12, denom)
+                    best_idx = int(np.nanargmax(metric_vals))
+                    best_thr = float(thr[best_idx])
+                    pred_binary = (anomaly_scores >= best_thr).astype(int)
+                    p2, r2, f12, _ = precision_recall_fscore_support(y_test, pred_binary, average='binary', zero_division=0)
+                    cm_t = confusion_matrix(y_test, pred_binary, labels=[0,1])
+                    logger.info(f"Tuned threshold results (metric={args.tune_metric}): Thr={best_thr:.6f}, Prec={p2:.3f}, Rec={r2:.3f}, F1={f12:.3f}")
+                    logger.info(f"Tuned Confusion Matrix [[TN, FP],[FN, TP]]: {cm_t.tolist()}")
+            except Exception as e:
+                logger.warning(f"Threshold tuning failed on test.csv: {e}")
+
         accuracy = (pred_binary == y_test).mean()
         tp = ((pred_binary == 1) & (y_test == 1)).sum()
         fp = ((pred_binary == 1) & (y_test == 0)).sum()
