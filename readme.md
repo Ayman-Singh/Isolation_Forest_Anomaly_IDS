@@ -3,7 +3,7 @@
 - Added decision-threshold tuning that selects a score threshold from the precision-recall curve (metric: F1) and applies it to evaluation output.
 - Evaluation run used: `UGR-16_dataset/April/april.week3.first10M.csv` (streamed evaluation).
 
-Key results (exact numbers from the evaluation run)
+Key results 
 
 Raw model evaluation (model.predict):
 - Accuracy: 0.789
