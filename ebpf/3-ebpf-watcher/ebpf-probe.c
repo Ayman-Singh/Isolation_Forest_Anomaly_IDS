@@ -6,9 +6,21 @@
 #include <uapi/linux/udp.h>
 #include <linux/in.h>
 #include <linux/icmp.h>
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_endian.h>
 #include <bcc/helpers.h>
+
+/* Fallback endian helpers if not provided */
+#ifndef bpf_ntohs
+#define bpf_ntohs(x) (__builtin_bswap16((__u16)(x)))
+#endif
+#ifndef bpf_htons
+#define bpf_htons(x) (__builtin_bswap16((__u16)(x)))
+#endif
+#ifndef bpf_ntohl
+#define bpf_ntohl(x) (__builtin_bswap32((__u32)(x)))
+#endif
+#ifndef bpf_htonl
+#define bpf_htonl(x) (__builtin_bswap32((__u32)(x)))
+#endif
 
 #define ACTION_PASS 0
 #define ACTION_DROP 1
@@ -213,7 +225,6 @@ static __always_inline void emit_feature_event(struct xdp_md *ctx,
     feature_events.perf_submit(ctx, &event, sizeof(event));
 }
 
-SEC("xdp")
 int xdp_feature_guard(struct xdp_md *ctx) {
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
@@ -336,4 +347,4 @@ int xdp_feature_guard(struct xdp_md *ctx) {
     return XDP_PASS;
 }
 
-char _license[] SEC("license") = "GPL";
+char _license[] = "GPL";

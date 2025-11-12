@@ -9,10 +9,12 @@
 
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
 #include <linux/if_ether.h>
 #include <linux/ip.h>
 #include <linux/udp.h>
 #include <linux/tcp.h>
+#include <linux/in.h>
 
 #define MAX_RULES 128
 
@@ -112,7 +114,7 @@ int xdp_fw_prog(struct xdp_md *ctx) {
     // Scan rules array (bounded loop). Keep best match by priority (smallest numeric).
     __u32 best_priority = (__u32)0xFFFFFFFF;
     __u32 best_action = final_action;
-    #pragma clang loop unroll(full)
+    #pragma unroll
     for (__u32 i = 0; i < MAX_RULES; i++) {
         struct rule *r = bpf_map_lookup_elem(&rules_map, &i);
         if (!r) continue;
