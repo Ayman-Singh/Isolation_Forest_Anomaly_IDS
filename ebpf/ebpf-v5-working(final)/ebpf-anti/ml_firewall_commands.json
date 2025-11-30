@@ -1,0 +1,1220 @@
+[
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "142.250.193.74",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "33404",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "142.250.193.74",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "33404",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.001,
+      "packets": 1,
+      "bytes": 60,
+      "bps": 60000.0,
+      "pps": 1000.0
+    },
+    "ml_score": -0.042960222883779764,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "172.253.134.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "56944",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "172.253.134.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "56944",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.001,
+      "packets": 1,
+      "bytes": 60,
+      "bps": 60000.0,
+      "pps": 1000.0
+    },
+    "ml_score": -0.034769414121459175,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "172.253.134.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "56952",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "172.253.134.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "56952",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.001,
+      "packets": 1,
+      "bytes": 60,
+      "bps": 60000.0,
+      "pps": 1000.0
+    },
+    "ml_score": -0.034769414121459175,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "142.250.183.234",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "40616",
+      "--proto",
+      "udp",
+      "--action",
+      "drop"
+    ],
+    "fields": {
+      "src": "142.250.183.234",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "40616",
+      "proto": "udp"
+    },
+    "features": {
+      "duration": 0.001,
+      "packets": 1,
+      "bytes": 203,
+      "bps": 203000.0,
+      "pps": 1000.0
+    },
+    "ml_score": -0.09811910961960613,
+    "ml_label": 1,
+    "action": "drop",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "34.54.84.110",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "58438",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "34.54.84.110",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "58438",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 1.948386129,
+      "packets": 91,
+      "bytes": 90800,
+      "bps": 46602.67215441668,
+      "pps": 46.705321212025524
+    },
+    "ml_score": -0.04752772350915846,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "10.0.2.3",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "53",
+      "--dport",
+      "48407",
+      "--proto",
+      "udp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "10.0.2.3",
+      "dst": "10.0.2.15",
+      "sport": "53",
+      "dport": "48407",
+      "proto": "udp"
+    },
+    "features": {
+      "duration": 0.001,
+      "packets": 1,
+      "bytes": 181,
+      "bps": 181000.0,
+      "pps": 1000.0
+    },
+    "ml_score": -0.08225751320222663,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "10.0.2.3",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "53",
+      "--dport",
+      "34669",
+      "--proto",
+      "udp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "10.0.2.3",
+      "dst": "10.0.2.15",
+      "sport": "53",
+      "dport": "34669",
+      "proto": "udp"
+    },
+    "features": {
+      "duration": 0.001,
+      "packets": 1,
+      "bytes": 169,
+      "bps": 169000.0,
+      "pps": 1000.0
+    },
+    "ml_score": -0.08103533799315255,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34278",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34278",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 1.081575175,
+      "packets": 36,
+      "bytes": 13731,
+      "bps": 12695.372746512974,
+      "pps": 33.28478762467898
+    },
+    "ml_score": -0.02008826134814734,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34276",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34276",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 2.10567484,
+      "packets": 55,
+      "bytes": 21477,
+      "bps": 10199.58048223628,
+      "pps": 26.11989228118431
+    },
+    "ml_score": -0.027292770197880012,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "216.239.32.223",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34698",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "216.239.32.223",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34698",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.240286811,
+      "packets": 21,
+      "bytes": 1761,
+      "bps": 7328.7418176272695,
+      "pps": 87.39555830219912
+    },
+    "ml_score": -0.041690093167029985,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "198.41.30.195",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "54222",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "198.41.30.195",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "54222",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.001,
+      "packets": 1,
+      "bytes": 60,
+      "bps": 60000.0,
+      "pps": 1000.0
+    },
+    "ml_score": -0.03394112983531461,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "52.182.143.215",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "40698",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "52.182.143.215",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "40698",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 2.984749558,
+      "packets": 37,
+      "bytes": 2533,
+      "bps": 848.6474160657201,
+      "pps": 12.396349938583358
+    },
+    "ml_score": -0.007504344641498073,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34294",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34294",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 1.009411987,
+      "packets": 37,
+      "bytes": 13798,
+      "bps": 13669.34430906456,
+      "pps": 36.65500358279379
+    },
+    "ml_score": -0.021013599932725002,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34310",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34310",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.15592614,
+      "packets": 13,
+      "bytes": 10964,
+      "bps": 70315.34289247461,
+      "pps": 83.37280715087284
+    },
+    "ml_score": -0.013668379905283357,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34318",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34318",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.787022632,
+      "packets": 33,
+      "bytes": 12689,
+      "bps": 16122.789210971509,
+      "pps": 41.93017920734965
+    },
+    "ml_score": -0.018823176913437045,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34334",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34334",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.91198065,
+      "packets": 37,
+      "bytes": 13387,
+      "bps": 14679.039516902032,
+      "pps": 40.571036238543
+    },
+    "ml_score": -0.09211400462487429,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34348",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34348",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.277349383,
+      "packets": 37,
+      "bytes": 12398,
+      "bps": 44701.739971060255,
+      "pps": 133.40574116222209
+    },
+    "ml_score": -0.0427171938818427,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34352",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34352",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.132169726,
+      "packets": 13,
+      "bytes": 10963,
+      "bps": 82946.37759936039,
+      "pps": 98.35837898309633
+    },
+    "ml_score": -0.01530851176014869,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34354",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34354",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.776197881,
+      "packets": 32,
+      "bytes": 12109,
+      "bps": 15600.403320348669,
+      "pps": 41.22660056579052
+    },
+    "ml_score": -0.029855370621182376,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34368",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34368",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.186820932,
+      "packets": 12,
+      "bytes": 10909,
+      "bps": 58392.81435551344,
+      "pps": 64.23263106299031
+    },
+    "ml_score": -0.011735200302422255,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34384",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34384",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.738583834,
+      "packets": 32,
+      "bytes": 12109,
+      "bps": 16394.889033003124,
+      "pps": 43.32615815146585
+    },
+    "ml_score": -0.03016694373572526,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34410",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34410",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.121506248,
+      "packets": 13,
+      "bytes": 10962,
+      "bps": 90217.58288512044,
+      "pps": 106.99038291430084
+    },
+    "ml_score": -0.01622848429969681,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34398",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34398",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.909336492,
+      "packets": 35,
+      "bytes": 12284,
+      "bps": 13508.750729867334,
+      "pps": 38.48960237262754
+    },
+    "ml_score": -0.030439017082559028,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34412",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34412",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.167187105,
+      "packets": 13,
+      "bytes": 10962,
+      "bps": 65567.25771404439,
+      "pps": 77.75719305624678
+    },
+    "ml_score": -0.013251453898036614,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34420",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34420",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.853270775,
+      "packets": 32,
+      "bytes": 12928,
+      "bps": 15151.110736213835,
+      "pps": 37.50274934706395
+    },
+    "ml_score": -0.018485696015921538,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34424",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34424",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.244790813,
+      "packets": 13,
+      "bytes": 10964,
+      "bps": 44789.26257743178,
+      "pps": 53.106568178275545
+    },
+    "ml_score": -0.01152669105374371,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34426",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34426",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.269485202,
+      "packets": 35,
+      "bytes": 12278,
+      "bps": 45560.94326841739,
+      "pps": 129.8772613124783
+    },
+    "ml_score": -0.025694272092251502,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34440",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34440",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.144056323,
+      "packets": 34,
+      "bytes": 12222,
+      "bps": 84841.81565567241,
+      "pps": 236.0187966202636
+    },
+    "ml_score": -0.03260503044082108,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  },
+  {
+    "cmd": [
+      "sudo",
+      "./manager",
+      "add",
+      "--src",
+      "64.233.170.81",
+      "--dst",
+      "10.0.2.15",
+      "--sport",
+      "443",
+      "--dport",
+      "34456",
+      "--proto",
+      "tcp",
+      "--action",
+      "pass"
+    ],
+    "fields": {
+      "src": "64.233.170.81",
+      "dst": "10.0.2.15",
+      "sport": "443",
+      "dport": "34456",
+      "proto": "tcp"
+    },
+    "features": {
+      "duration": 0.179862375,
+      "packets": 13,
+      "bytes": 10963,
+      "bps": 60952.158560121316,
+      "pps": 72.27748438215609
+    },
+    "ml_score": -0.012751180858380229,
+    "ml_label": 0,
+    "action": "pass",
+    "result": {
+      "rc": 0,
+      "stdout": "Rule added",
+      "stderr": "",
+      "applied": true
+    }
+  }
+]
